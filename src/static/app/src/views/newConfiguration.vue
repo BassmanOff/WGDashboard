@@ -531,13 +531,12 @@ export default {
 											       class="form-control font-monospace" 
 											       id="HeaderProtectionKey" 
 											       v-model="this.newConfiguration.HeaderProtectionKey"
-											       placeholder="64 hex characters (32 bytes)">
+											       placeholder="44 base64 characters (32 bytes)">
 											<button class="btn btn-outline-primary" type="button"
 											        @click="generateHeaderProtectionKey()">
 												<i class="bi bi-arrow-repeat"></i>
 											</button>
 										</div>
-										<div class="form-text">32-byte key for Header Protection (ChaCha20)</div>
 										<div class="form-text" v-if="AMNEZIA_PARAM_INFO['HeaderProtectionKey']">
 											<LocaleText :t="AMNEZIA_PARAM_INFO['HeaderProtectionKey'].text"></LocaleText>
 										</div>

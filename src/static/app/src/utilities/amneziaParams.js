@@ -50,7 +50,7 @@ export const AMNEZIA_PARAM_INFO = {
 	I5: {isNew: false, text: 'CPS packet with random bytes. Same format as I1.'},
 
 	// --- AmneziaWG 3.1 ---
-	HeaderProtectionKey: {isNew: true, text: '32-byte key (64 hex characters) for Header Protection. Hides unencrypted service fields of WireGuard packets. Requires S1-S4 of at least 12 bytes, and H1-H4 set to 1/2/3/4.'},
+	HeaderProtectionKey: {isNew: true, text: '32-byte key for Header Protection, in base64 (44 characters, same format as awg genkey). Hides unencrypted service fields of WireGuard packets. Requires S1-S4 of at least 12 bytes, and H1-H4 set to 1/2/3/4.'},
 	ContentPaddingAddition: {isNew: true, text: 'Adds a random number of bytes (from this range) to transport payloads to defeat statistical padding analysis. Uses free space up to the internal MTU. Keep at 0 unless measured.'},
 	RekeyAfterTime: {isNew: true, text: 'Seconds before a session is rekeyed. WireGuard default is 120. Accepts a range to make sessions look less repetitive.'},
 	RekeyTimeout: {isNew: true, text: 'Seconds to wait for a handshake response before retrying. WireGuard default is 5.'},
@@ -138,9 +138,17 @@ export const recommendedMTUFor = (values) => {
 	return 1420 - (parseInt(values.S4, 10) || 0);
 };
 
-/** Генерирует 32-байтовый ключ в виде 64 hex-символов */
+/**
+ * Генерирует 32-байтовый ключ в base64 (44 символа, формат awg genkey).
+ *
+ * Именно base64, а не hex: в amneziawg-tools ключи разбираются через
+ * key_from_base64(), поэтому hex-строка из 64 символов отвергается с
+ * "Key is not the correct length or format".
+ */
 export const generateRandomKey = () => {
 	const array = new Uint8Array(32);
 	crypto.getRandomValues(array);
-	return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+	let binary = '';
+	array.forEach(byte => { binary += String.fromCharCode(byte); });
+	return btoa(binary);
 };

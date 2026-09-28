@@ -1,6 +1,7 @@
 """
 AmneziaWG 3.1 Parameter Validation
 """
+import base64
 import re
 import secrets
 
@@ -107,15 +108,19 @@ def ValidateCPS(value: str) -> tuple[bool, str]:
 
 
 def ValidateHeaderProtectionKey(value: str) -> tuple[bool, str]:
-    """Validate 32-byte key (64 hex characters)"""
+    """Validate a 32-byte key in base64 (44 characters, as produced by awg genkey)"""
     if value is None or value == "":
         return True, ""
-    
-    # Must be 64 hex characters (32 bytes)
-    if re.match(r'^[0-9a-fA-F]{64}$', value):
+
+    try:
+        decoded = base64.b64decode(str(value), validate=True)
+    except Exception:
+        return False, "HeaderProtectionKey must be a base64 string (awg genkey format), not hex"
+
+    if len(decoded) == 32:
         return True, ""
-    
-    return False, "HeaderProtectionKey must be exactly 64 hex characters (32 bytes)"
+
+    return False, f"HeaderProtectionKey must decode to 32 bytes, got {len(decoded)}"
 
 
 def ValidateOnOff(value: str) -> tuple[bool, str]:
@@ -182,8 +187,14 @@ def ValidateAmneziaWG31Params(params: dict) -> tuple[bool, dict[str, str]]:
 
 
 def GenerateHeaderProtectionKey() -> str:
-    """Generate a random 32-byte key as hex string"""
-    return secrets.token_hex(32)
+    """
+    Случайный 32-байтовый ключ в base64.
+
+    Именно base64, а не hex: в amneziawg-tools ключи разбираются функцией
+    parse_key(), которая вызывает key_from_base64(). Hex-строка из 64 символов
+    отвергается с "Key is not the correct length or format".
+    """
+    return base64.b64encode(secrets.token_bytes(32)).decode('ascii')
 
 
 def ValidateH1H4NonOverlapping(H1: str, H2: str, H3: str, H4: str) -> tuple[bool, str]:

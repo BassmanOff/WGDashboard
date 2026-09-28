@@ -333,13 +333,15 @@ const deleteConfigurationModal = ref(false)
 															       :disabled="saving"
 															       v-model="data.HeaderProtectionKey"
 															       id="configuration_HeaderProtectionKey"
-															       placeholder="64 hex characters (32 bytes)">
+															       placeholder="44 base64 characters (32 bytes)">
 															<button class="btn btn-outline-primary btn-sm" type="button"
 															        @click="generateHeaderProtectionKey()">
 																<i class="bi bi-arrow-repeat"></i>
 															</button>
 														</div>
-														<div class="form-text">32-byte key for Header Protection (ChaCha20)</div>
+														<div class="form-text" v-if="AMNEZIA_PARAM_INFO['HeaderProtectionKey']">
+															<LocaleText :t="AMNEZIA_PARAM_INFO['HeaderProtectionKey'].text"></LocaleText>
+														</div>
 													</div>
 													
 													<div v-for="key in ['ContentPaddingAddition', 'RekeyAfterTime', 'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout', 'MaxHandshakeAttempts']"
