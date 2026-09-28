@@ -563,13 +563,27 @@ class WireguardConfiguration:
                         f.write(p['preshared_key'])
 
                 command = [self.Protocol, "set", self.Name, "peer", p['id'], "allowed-ips", cleanedAllowedIPs[p["id"]], "preshared-key", uid if presharedKeyExist else "/dev/null"]
-                subprocess.check_output(command, stderr=subprocess.STDOUT)
+                setOutput = subprocess.check_output(command, stderr=subprocess.STDOUT)
+
+                # awg set может завершиться с кодом 0, но напечатать ошибку в stderr
+                if len(setOutput.decode().strip()) != 0:
+                    msg = setOutput.decode().strip()
+                    current_app.logger.error(
+                        f"{self.Name} awg set failed for peer {p['id']}: {msg}")
+                    return False, [], msg
 
                 if presharedKeyExist:
                     os.remove(uid)
 
+            # Код возврата уже проверяется самим check_output: при ошибке
+            # поднимается CalledProcessError. Содержимое вывода только логируем -
+            # wg-quick save пишет результат в файл конфигурации, а не в stdout,
+            # поэтому проверять его содержимое нельзя.
             command = [f"{self.Protocol}-quick", "save", self.Name]
-            subprocess.check_output(command, stderr=subprocess.STDOUT)
+            saveOutput = subprocess.check_output(command, stderr=subprocess.STDOUT)
+            saveText = saveOutput.decode().strip()
+            if saveText:
+                current_app.logger.info(f"{self.Name} awg-quick save: {saveText}")
 
             self.getPeers()
             for p in peers:
@@ -581,8 +595,25 @@ class WireguardConfiguration:
                 "peers": list(map(lambda k : k['id'], peers))
             })
         except Exception as e:
-            current_app.logger.error("Add peers error", e)
-            return False, [], "Internal server error"
+            # Откатываем записи: пиры добавляются в базу до вызова awg,
+            # поэтому при сбое остались бы строки без пира в интерфейсе,
+            # и повторная попытка падала бы с "already exist"
+            try:
+                with self.engine.begin() as conn:
+                    for i in peers:
+                        conn.execute(
+                            self.peersTable.delete().where(
+                                self.peersTable.c.id == i['id']
+                            )
+                        )
+            except Exception as rollbackError:
+                current_app.logger.error(
+                    f"Rollback of {self.Name} peers failed: {rollbackError}")
+
+            current_app.logger.error(
+                f"Add peers error on {self.Name}: {type(e).__name__}: {e}",
+                exc_info=True)
+            return False, [], str(e) if str(e) else "Internal server error"
         return True, result['peers'], ""
 
     def searchPeer(self, publicKey):
