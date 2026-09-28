@@ -40,6 +40,48 @@ export default {
 				this.$emit("refresh")
 			})
 		},
+		importSplitTunnelJSON(e){
+			const file = e.target.files[0];
+			// Сбрасываем значение input, чтобы повторный выбор того же файла сработал
+			e.target.value = "";
+			if (!file) return;
+			const reader = new FileReader();
+			reader.onload = (evt) => {
+				try{
+					const parsed = JSON.parse(evt.target.result);
+					if (!Array.isArray(parsed)){
+						throw new Error("Ожидался массив вида [{\"hostname\": \"10.0.0.0/8\", \"ip\": \"\"}]");
+					}
+					const extracted = [];
+					const invalid = [];
+					parsed.forEach(entry => {
+						const value = (entry && (entry.hostname || entry.ip)) || "";
+						if (typeof value === "string" && value.trim().length > 0){
+							extracted.push(value.trim());
+						}else{
+							invalid.push(JSON.stringify(entry));
+						}
+					});
+					if (extracted.length === 0){
+						this.dashboardConfigurationStore.newMessage("WGDashboard", "В файле не найдено ни одного адреса", "danger");
+						return;
+					}
+					this.data.split_tunnel_ips = extracted.join(", ");
+					this.dataChanged = true;
+					let msg = `Импортировано адресов: ${extracted.length}`;
+					if (invalid.length > 0){
+						msg += `. Пропущено некорректных записей: ${invalid.length}`;
+					}
+					this.dashboardConfigurationStore.newMessage("WGDashboard", msg, invalid.length > 0 ? "warning" : "success");
+				}catch (e){
+					this.dashboardConfigurationStore.newMessage("WGDashboard", `Не удалось прочитать файл: ${e.message}`, "danger");
+				}
+			};
+			reader.onerror = () => {
+				this.dashboardConfigurationStore.newMessage("WGDashboard", "Не удалось прочитать файл", "danger");
+			};
+			reader.readAsText(file);
+		},
 		resetPeerData(type){
 			this.saving = true
 			fetchPost(`/api/resetPeerData/${this.$route.params.id}`, {
@@ -208,6 +250,44 @@ export default {
 												       :disabled="this.saving"
 												       v-model="this.data.keepalive"
 												       id="peer_keep_alive">
+											</div>
+											<!-- Split Tunneling Settings -->
+											<div>
+												<label for="peer_split_tunnel_mode" class="form-label">
+													<small class="text-muted">
+														<LocaleText t="Split Tunnel Mode"></LocaleText>
+													</small>
+												</label>
+												<select class="form-select form-select-sm rounded-3"
+												        :disabled="this.saving"
+												        v-model="this.data.split_tunnel_mode"
+												        id="peer_split_tunnel_mode">
+													<option value="include">Only these IPs through VPN</option>
+													<option value="exclude">All except these IPs through VPN</option>
+												</select>
+											</div>
+											<div>
+												<label for="peer_split_tunnel_ips" class="form-label">
+													<small class="text-muted">
+														<LocaleText t="Split Tunnel IPs"></LocaleText>
+													</small>
+												</label>
+												<textarea class="form-control form-control-sm rounded-3"
+												          :disabled="this.saving"
+												          v-model="this.data.split_tunnel_ips"
+												          id="peer_split_tunnel_ips"
+												          placeholder="e.g., 10.0.0.0/8, 172.16.0.0/12"
+												          rows="3"></textarea>
+												<div class="form-text d-flex align-items-center gap-2">
+												<span>IP-адреса/CIDR для раздельного туннелирования (через запятую или по одному на строку)</span>
+												<button type="button" class="btn btn-sm btn-outline-primary ms-auto"
+												        @click="this.$refs.splitTunnelFile.click()">
+													<i class="bi bi-upload me-1"></i>
+													<LocaleText t="Import from JSON"></LocaleText>
+												</button>
+												<input type="file" class="d-none" accept=".json,application/json"
+												       ref="splitTunnelFile" @change="this.importSplitTunnelJSON">
+											</div>
 											</div>
 										</div>
 									</div>

@@ -27,6 +27,19 @@ from .DashboardWebHooks import DashboardWebHooks
 
 
 class WireguardConfiguration:
+    # Параметры протокола AmneziaWG (2.0+ / 3.1), записываемые в секцию [Interface].
+    # Общий список используется при создании и редактировании .conf файла.
+    AMNEZIA_PARAMETERS = [
+        "Jc", "Jmin", "Jmax",
+        "S1", "S2", "S3", "S4",
+        "H1", "H2", "H3", "H4",
+        "I1", "I2", "I3", "I4", "I5",
+        "HeaderProtectionKey", "ContentPaddingAddition",
+        "RekeyAfterTime", "RekeyTimeout", "RejectAfterTime",
+        "KeepaliveTimeout", "MaxHandshakeAttempts",
+        "RandomTrailers", "DisableCookies"
+    ]
+
     class InvalidConfigurationFileException(Exception):
         def __init__(self, m):
             self.message = m
@@ -109,23 +122,13 @@ class WireguardConfiguration:
             }
 
             if self.Protocol == 'awg':
-                self.__parser["Interface"]["Jc"] = self.Jc
-                self.__parser["Interface"]["Jc"] = self.Jc
-                self.__parser["Interface"]["Jmin"] = self.Jmin
-                self.__parser["Interface"]["Jmax"] = self.Jmax
-                self.__parser["Interface"]["S1"] = self.S1
-                self.__parser["Interface"]["S2"] = self.S2
-                self.__parser["Interface"]["S3"] = self.S3
-                self.__parser["Interface"]["S4"] = self.S4
-                self.__parser["Interface"]["H1"] = self.H1
-                self.__parser["Interface"]["H2"] = self.H2
-                self.__parser["Interface"]["H3"] = self.H3
-                self.__parser["Interface"]["H4"] = self.H4
-                self.__parser["Interface"]["I1"] = self.I1
-                self.__parser["Interface"]["I2"] = self.I2
-                self.__parser["Interface"]["I3"] = self.I3
-                self.__parser["Interface"]["I4"] = self.I4
-                self.__parser["Interface"]["I5"] = self.I5
+                # AmneziaWG 2.0+ and 3.1 parameters.
+                # Пустые значения не записываются: awg-quick не принимает "Key = " без значения.
+                for key in self.AMNEZIA_PARAMETERS:
+                    value = getattr(self, key, None)
+                    if value is None or (isinstance(value, str) and len(value.strip()) == 0):
+                        continue
+                    self.__parser["Interface"][key] = value
 
             if "Backup" not in data.keys():
                 self.createDatabase()
@@ -268,7 +271,10 @@ class WireguardConfiguration:
                 sqlalchemy.Column('keepalive', sqlalchemy.Integer),
                 sqlalchemy.Column('notes', sqlalchemy.Text),
                 sqlalchemy.Column('remote_endpoint', sqlalchemy.String(255)),
-                sqlalchemy.Column('preshared_key', sqlalchemy.String(255))
+                sqlalchemy.Column('preshared_key', sqlalchemy.String(255)),
+                # Split tunneling fields
+                sqlalchemy.Column('split_tunnel_ips', sqlalchemy.Text),
+                sqlalchemy.Column('split_tunnel_mode', sqlalchemy.String(10))
             ]
 
         if dbName is None:
@@ -1008,7 +1014,7 @@ class WireguardConfiguration:
             original = [l.rstrip("\n") for l in f.readlines()]
             allowEdit = ["Address", "PreUp", "PostUp", "PreDown", "PostDown", "ListenPort", "Table"]
             if self.Protocol == 'awg':
-                allowEdit += ["Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5"]
+                allowEdit += self.AMNEZIA_PARAMETERS
             start = original.index("[Interface]")
             try:
                 end = original.index("[Peer]")
@@ -1022,7 +1028,14 @@ class WireguardConfiguration:
                     if split[0] not in allowEdit:
                         new.append(original[line])
             for key in allowEdit:
-                new.insert(1, f"{key} = {str(newData[key]).strip()}")
+                # Пропускаем отсутствующие ключи, чтобы не ломать сохранение из старого фронтенда/API
+                if key not in newData or newData[key] is None:
+                    continue
+                value = str(newData[key]).strip()
+                # awg-quick не принимает "Key = " без значения
+                if len(value) == 0:
+                    continue
+                new.insert(1, f"{key} = {value}")
             new.append("")
             for line in range(end, len(original)):
                 new.append(original[line])
@@ -1034,8 +1047,9 @@ class WireguardConfiguration:
         if not status:
             return False, msg
         for i in allowEdit:
-            setattr(self, i, str(newData[i]))
-                
+            if i in newData and newData[i] is not None:
+                setattr(self, i, str(newData[i]))
+
         return True, ""
 
     def deleteConfiguration(self):

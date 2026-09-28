@@ -1,5 +1,5 @@
 """
-AmneziaWG Configuration
+AmneziaWG Configuration (v3.1+)
 """
 import random, sqlalchemy, os, subprocess, re, uuid
 from flask import current_app
@@ -12,6 +12,17 @@ from .DashboardWebHooks import DashboardWebHooks
 
 
 class AmneziaConfiguration(WireguardConfiguration):
+    # AmneziaWG 3.1 default values
+    DEFAULT_HEADER_PROTECTION_KEY = ""
+    DEFAULT_CONTENT_PADDING_ADDITION = "0"
+    DEFAULT_REKEY_AFTER_TIME = "0"
+    DEFAULT_REKEY_TIMEOUT = "0"
+    DEFAULT_REJECT_AFTER_TIME = "0"
+    DEFAULT_KEEPALIVE_TIMEOUT = "0"
+    DEFAULT_MAX_HANDSHAKE_ATTEMPTS = "0"
+    DEFAULT_RANDOM_TRAILERS = "off"
+    DEFAULT_DISABLE_COOKIES = "off"
+
     def __init__(self,
                  DashboardConfig,
                  AllPeerJobs: PeerJobs,
@@ -21,6 +32,7 @@ class AmneziaConfiguration(WireguardConfiguration):
                  data: dict = None,
                  backup: dict = None,
                  startup: bool = False):
+        # AmneziaWG 2.0+ parameters
         self.Jc = 0
         self.Jmin = 0
         self.Jmax = 0
@@ -37,6 +49,17 @@ class AmneziaConfiguration(WireguardConfiguration):
         self.I3 = "0"
         self.I4 = "0"
         self.I5 = "0"
+
+        # AmneziaWG 3.1 new parameters
+        self.HeaderProtectionKey = self.DEFAULT_HEADER_PROTECTION_KEY
+        self.ContentPaddingAddition = self.DEFAULT_CONTENT_PADDING_ADDITION
+        self.RekeyAfterTime = self.DEFAULT_REKEY_AFTER_TIME
+        self.RekeyTimeout = self.DEFAULT_REKEY_TIMEOUT
+        self.RejectAfterTime = self.DEFAULT_REJECT_AFTER_TIME
+        self.KeepaliveTimeout = self.DEFAULT_KEEPALIVE_TIMEOUT
+        self.MaxHandshakeAttempts = self.DEFAULT_MAX_HANDSHAKE_ATTEMPTS
+        self.RandomTrailers = self.DEFAULT_RANDOM_TRAILERS
+        self.DisableCookies = self.DEFAULT_DISABLE_COOKIES
 
         super().__init__(DashboardConfig, AllPeerJobs, AllPeerShareLinks, DashboardWebHooks, name, data, backup, startup, wg=False)
 
@@ -64,6 +87,7 @@ class AmneziaConfiguration(WireguardConfiguration):
             "TotalPeers": len(self.Peers),
             "Protocol": self.Protocol,
             "Table": self.Table,
+            # AmneziaWG 2.0+ parameters
             "Jc": self.Jc,
             "Jmin": self.Jmin,
             "Jmax": self.Jmax,
@@ -79,7 +103,17 @@ class AmneziaConfiguration(WireguardConfiguration):
             "I2": self.I2,
             "I3": self.I3,
             "I4": self.I4,
-            "I5": self.I5
+            "I5": self.I5,
+            # AmneziaWG 3.1 new parameters
+            "HeaderProtectionKey": self.HeaderProtectionKey,
+            "ContentPaddingAddition": self.ContentPaddingAddition,
+            "RekeyAfterTime": self.RekeyAfterTime,
+            "RekeyTimeout": self.RekeyTimeout,
+            "RejectAfterTime": self.RejectAfterTime,
+            "KeepaliveTimeout": self.KeepaliveTimeout,
+            "MaxHandshakeAttempts": self.MaxHandshakeAttempts,
+            "RandomTrailers": self.RandomTrailers,
+            "DisableCookies": self.DisableCookies
         }
 
     def createDatabase(self, dbName = None):
@@ -213,7 +247,9 @@ class AmneziaConfiguration(WireguardConfiguration):
                                         "keepalive": self.DashboardConfig.GetConfig("Peers", "peer_keep_alive")[1],
                                         "notes": "",
                                         "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
-                                        "preshared_key": i["PresharedKey"] if "PresharedKey" in i.keys() else ""
+                                        "preshared_key": i["PresharedKey"] if "PresharedKey" in i.keys() else "",
+                                        "split_tunnel_ips": "",
+                                        "split_tunnel_mode": "include"
                                     }
                                     conn.execute(
                                         self.peersTable.insert().values(tempPeer)
@@ -272,7 +308,9 @@ class AmneziaConfiguration(WireguardConfiguration):
                         "keepalive": i['keepalive'],
                         "notes": i.get('notes', ''),
                         "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
-                        "preshared_key": i["preshared_key"]
+                        "preshared_key": i["preshared_key"],
+                        "split_tunnel_ips": i.get('split_tunnel_ips', ''),
+                        "split_tunnel_mode": i.get('split_tunnel_mode', 'include')
                     }
                     conn.execute(
                         self.peersTable.insert().values(newPeer)

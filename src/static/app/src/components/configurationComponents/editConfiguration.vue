@@ -34,12 +34,58 @@ const genKey = () => {
 		reqField.PrivateKey = false;
 	}
 }
+const generateHeaderProtectionKey = () => {
+	// Generate 32 random bytes and convert to hex (64 characters)
+	const array = new Uint8Array(32);
+	crypto.getRandomValues(array);
+	data.HeaderProtectionKey = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+}
 const resetForm = () => {
 	dataChanged.value = false;
 	Object.assign(data, JSON.parse(JSON.stringify(props.configurationInfo)))
 }
 const emit = defineEmits(["changed", "close", "refresh", "dataChanged"])
+// Диапазоны H1-H4 не должны пересекаться (AmneziaWG 3.1)
+const validateHeaderRanges = () => {
+	if (props.configurationInfo.Protocol !== 'awg') return true;
+	const parse = (value) => {
+		const str = String(value ?? '').trim();
+		if (str === '' || str === '0') return null;
+		const parts = str.split('-');
+		if (parts.length === 1) {
+			const n = parseInt(parts[0], 10);
+			return Number.isNaN(n) ? null : [n, n];
+		}
+		const low = parseInt(parts[0], 10);
+		const high = parseInt(parts[1], 10);
+		if (Number.isNaN(low) || Number.isNaN(high) || low > high) return null;
+		return [low, high];
+	};
+	// Значения 1/2/3/4 отключают механизм и проверке не подлежат
+	const compat = {H1: 1, H2: 2, H3: 3, H4: 4};
+	const ranges = {};
+	['H1', 'H2', 'H3', 'H4'].forEach((key) => {
+		const parsed = parse(data[key]);
+		if (parsed === null) return;
+		if (parsed[0] === parsed[1] && parsed[0] === compat[key]) return;
+		ranges[key] = parsed;
+	});
+	const names = Object.keys(ranges);
+	for (let i = 0; i < names.length; i++) {
+		for (let j = i + 1; j < names.length; j++) {
+			const a = ranges[names[i]];
+			const b = ranges[names[j]];
+			if (a[0] <= b[1] && b[0] <= a[1]) {
+				store.newMessage("Server", `${names[i]} (${a[0]}-${a[1]}) and ${names[j]} (${b[0]}-${b[1]}) ranges overlap`, "danger");
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
 const saveForm = ()  => {
+	if (!validateHeaderRanges()) return;
 	saving.value = true
 	fetchPost("/api/updateWireguardConfiguration", data, (res) => {
 		saving.value = false
@@ -197,6 +243,7 @@ const deleteConfigurationModal = ref(false)
 														       v-model="data[key]"
 														       :id="'configuration_' + key">
 													</div>
+													<!-- AmneziaWG 2.0+ parameters -->
 													<div v-for="key in ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4', 'I1', 'I2', 'I3', 'I4', 'I5']"
 													     v-if="configurationInfo.Protocol === 'awg'">
 														<label :for="'configuration_' + key" class="form-label">
@@ -208,6 +255,56 @@ const deleteConfigurationModal = ref(false)
 														       :disabled="saving"
 														       v-model="data[key]"
 														       :id="'configuration_' + key">
+													</div>
+													
+													<!-- AmneziaWG 3.1 new parameters -->
+													<div v-if="configurationInfo.Protocol === 'awg'">
+														<label for="configuration_HeaderProtectionKey" class="form-label">
+															<small class="text-muted">HeaderProtectionKey</small>
+														</label>
+														<div class="input-group input-group-sm">
+															<input type="text" class="form-control form-control-sm rounded-3 font-monospace"
+															       :disabled="saving"
+															       v-model="data.HeaderProtectionKey"
+															       id="configuration_HeaderProtectionKey"
+															       placeholder="64 hex characters (32 bytes)">
+															<button class="btn btn-outline-primary btn-sm" type="button"
+															        @click="generateHeaderProtectionKey()">
+																<i class="bi bi-arrow-repeat"></i>
+															</button>
+														</div>
+														<div class="form-text">32-byte key for Header Protection (ChaCha20)</div>
+													</div>
+													
+													<div v-for="key in ['ContentPaddingAddition', 'RekeyAfterTime', 'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout', 'MaxHandshakeAttempts']"
+													     v-if="configurationInfo.Protocol === 'awg'">
+														<label :for="'configuration_' + key" class="form-label">
+															<small class="text-muted">
+																<LocaleText :t="key"></LocaleText>
+															</small>
+														</label>
+														<input type="text" class="form-control form-control-sm rounded-3 font-monospace"
+														       :disabled="saving"
+														       v-model="data[key]"
+														       :id="'configuration_' + key"
+														       placeholder="e.g., 10-100 or 50">
+														<div class="form-text">uint16 range (0-65535)</div>
+													</div>
+													
+													<div v-for="key in ['RandomTrailers', 'DisableCookies']"
+													     v-if="configurationInfo.Protocol === 'awg'">
+														<label :for="'configuration_' + key" class="form-label">
+															<small class="text-muted">
+																<LocaleText :t="key"></LocaleText>
+															</small>
+														</label>
+														<select class="form-select form-select-sm rounded-3"
+														        :disabled="saving"
+														        v-model="data[key]"
+														        :id="'configuration_' + key">
+															<option value="off">off</option>
+															<option value="on">on</option>
+														</select>
 													</div>
 												</div>
 											</div>

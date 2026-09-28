@@ -21,6 +21,24 @@ const route = useRoute()
 onMounted(() => {
 	document.querySelector(".clientList .active")?.scrollIntoView()
 })
+
+// Индикатор статуса оплаты (виден только администратору)
+const paymentInfo = (client) => {
+	switch (client.PaymentStatus){
+		case 'expired':
+			return {icon: 'bi-x-octagon-fill', cls: 'text-danger', title: 'Payment overdue'}
+		case 'expiring':
+			return {
+				icon: 'bi-exclamation-triangle-fill',
+				cls: 'text-warning',
+				title: `${client.DaysRemaining} day(s) left`
+			}
+		case 'active':
+			return {icon: 'bi-check-circle-fill', cls: 'text-success', title: 'Paid'}
+		default:
+			return null
+	}
+}
 </script>
 
 <template>
@@ -40,7 +58,11 @@ onMounted(() => {
 					:to="{ name: 'Client Viewer', params: { id: client.ClientID } }"
 					class="list-group-item d-flex flex-column border-bottom list-group-item-action client"
 				    v-for="client in getClients" >
-					<small class="text-body">
+					<small class="text-body d-flex align-items-center gap-2">
+						<i v-if="paymentInfo(client)"
+						   class="bi"
+						   :class="[paymentInfo(client).icon, paymentInfo(client).cls]"
+						   :title="paymentInfo(client).title"></i>
 						{{ client.Email }}
 					</small>
 					<small class="text-muted">

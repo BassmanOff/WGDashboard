@@ -15,11 +15,31 @@ assignmentStore.getAllConfigurationsPeers();
 const searchString = ref("")
 const route = useRoute()
 const settings = ref(false)
+const onlyOverdue = ref(false)
+
 const oidc = computed(() => {
 	return Object.fromEntries(
 		Object.entries(assignmentStore.clients).filter(
 			([key, _])=>Object.keys(assignmentStore.clients).filter(x => x !== 'Local').includes(key)
 		)
+	)
+})
+
+// Фильтр "только просроченные" по статусу оплаты
+const allClients = computed(() => {
+	return Object.values(assignmentStore.clients || {}).flat()
+})
+const overdueCount = computed(() => {
+	return allClients.filter(x => x.PaymentStatus === 'expired').length
+})
+const filteredClients = (clients) => {
+	if (!onlyOverdue.value) return clients
+	return clients.filter(x => x.PaymentStatus === 'expired')
+}
+const filteredOIDC = computed(() => {
+	if (!onlyOverdue.value) return oidc.value
+	return Object.fromEntries(
+		Object.entries(oidc.value).map(([k, v]) => [k, filteredClients(v)])
 	)
 })
 
@@ -44,6 +64,14 @@ const deleteSuccess = async () => {
 						class="form-control rounded-3 form-control-sm"
 						:placeholder="GetLocale('Search Clients...')"
 						type="email" style="width: auto;">
+					<button class="btn btn-body bg-body-secondary rounded-3 btn-sm me-2"
+					        :class="{'text-danger border-danger': onlyOverdue}"
+					        :title="GetLocale('Show only clients with overdue payment')"
+					        @click="onlyOverdue = !onlyOverdue"
+					        v-if="overdueCount > 0">
+						<i class="bi bi-exclamation-triangle-fill me-1"></i>
+						{{ overdueCount }}
+					</button>
 					<button class="btn btn-body ms-auto bg-body-secondary rounded-3 btn-sm" @click="settings = !settings">
 						<i class="bi bi-gear-fill me-2"></i>
 						<LocaleText t="Settings"></LocaleText>
@@ -56,11 +84,14 @@ const deleteSuccess = async () => {
 					class="col-sm-4 border-end d-flex flex-column clientListContainer">
 					<div class="d-flex flex-column overflow-y-scroll" style="flex: 1 0 0">
 						<ClientGroup :searchString="searchString"
-									 v-if="Object.keys(assignmentStore.clients).includes('Local')"
-									 :clients="assignmentStore.clients.Local" groupName="Local"></ClientGroup>
-						<ClientGroup v-for="(clients, groupName) in oidc"
+									 v-if="Object.keys(assignmentStore.clients).includes('Local') && filteredClients(assignmentStore.clients.Local).length > 0"
+									 :clients="filteredClients(assignmentStore.clients.Local)" groupName="Local"></ClientGroup>
+						<ClientGroup v-for="(clients, groupName) in filteredOIDC"
 						             :searchString="searchString"
 						             :clients="clients" :groupName="groupName"></ClientGroup>
+						<div class="text-center text-muted p-4" v-if="onlyOverdue && overdueCount === 0">
+							<small><LocaleText t="No overdue payments"></LocaleText></small>
+						</div>
 					</div>
 				</div>
 				<div

@@ -31,19 +31,57 @@ export default {
 		this.height = document.querySelector("#peerDropdown").clientHeight
 	},
 	methods: {
-		downloadPeer(){
-			fetchGet("/api/downloadPeer/"+this.$route.params.id, {
+		downloadPeerJSON(){
+			fetchGet("/api/downloadPeerJSON/"+this.$route.params.id, {
 				id: this.Peer.id
 			}, (res) => {
 				if (res.status){
-					const blob = new Blob([res.data.file], { type: "text/conf" });
+					const blob = new Blob([res.data.file], { type: "application/json" });
 					const jsonObjectUrl = URL.createObjectURL(blob);
-					const filename = `${res.data.fileName}.conf`;
 					const anchorEl = document.createElement("a");
 					anchorEl.href = jsonObjectUrl;
-					anchorEl.download = filename;
+					anchorEl.download = res.data.fileName;
 					anchorEl.click();
-					this.dashboardStore.newMessage("WGDashboard", "Peer download started", "success")
+					this.dashboardStore.newMessage("WGDashboard", "Peer .json download started", "success")
+				}else{
+					this.dashboardStore.newMessage("Server", res.message, "danger")
+				}
+			})
+		},
+		downloadPeerIPList(){
+			fetchGet("/api/downloadPeerIPList/"+this.$route.params.id, {
+				id: this.Peer.id
+			}, (res) => {
+				if (res.status){
+					const entries = JSON.parse(res.data.file);
+					if (entries.length === 0){
+						this.dashboardStore.newMessage("WGDashboard", "No split tunneling addresses configured for this peer", "danger")
+						return
+					}
+					const blob = new Blob([res.data.file], { type: "application/json" });
+					const jsonObjectUrl = URL.createObjectURL(blob);
+					const anchorEl = document.createElement("a");
+					anchorEl.href = jsonObjectUrl;
+					anchorEl.download = res.data.fileName;
+					anchorEl.click();
+					this.dashboardStore.newMessage("WGDashboard", `ip-list.json downloaded (${entries.length} entries). Import it in AmneziaVPN: Settings -> Split tunneling -> "Addresses from the list without VPN"`, "success")
+				}else{
+					this.dashboardStore.newMessage("Server", res.message, "danger")
+				}
+			})
+		},
+		downloadPeerConf(){
+			fetchGet("/api/downloadPeerConf/"+this.$route.params.id, {
+				id: this.Peer.id
+			}, (res) => {
+				if (res.status){
+					const blob = new Blob([res.data.file], { type: "text/plain" });
+					const jsonObjectUrl = URL.createObjectURL(blob);
+					const anchorEl = document.createElement("a");
+					anchorEl.href = jsonObjectUrl;
+					anchorEl.download = res.data.fileName;
+					anchorEl.click();
+					this.dashboardStore.newMessage("WGDashboard", "Peer .conf download started", "success")
 				}else{
 					this.dashboardStore.newMessage("Server", res.message, "danger")
 				}
@@ -122,20 +160,25 @@ export default {
 				</template>
 				<template v-else>
 					<li>
-						<div class="text-center text-muted">
-							
-						</div>
 						<div class="d-flex" style="padding-left: var(--bs-dropdown-item-padding-x); padding-right: var(--bs-dropdown-item-padding-x);">
-							<PeerSettingsDropdownTool icon="bi-download" 
-							                          title="Download"
-							                          @click="this.downloadPeer()"></PeerSettingsDropdownTool>
-							<PeerSettingsDropdownTool icon="bi-qr-code" 
+							<PeerSettingsDropdownTool icon="bi-file-earmark-text"
+							                          title="Download .conf (AmneziaWG)"
+							                          @click="this.downloadPeerConf()"></PeerSettingsDropdownTool>
+							<PeerSettingsDropdownTool icon="bi-file-earmark-code"
+							                          title="Download .json (AmneziaVPN)"
+							                          @click="this.downloadPeerJSON()"></PeerSettingsDropdownTool>
+							<PeerSettingsDropdownTool icon="bi-qr-code"
 							                          title="QR Code"
 							                          @click="this.$emit('qrcode')"></PeerSettingsDropdownTool>
-							<PeerSettingsDropdownTool icon="bi-body-text" 
+							<PeerSettingsDropdownTool icon="bi-list-ul"
+							                          title="Download split tunneling list (ip-list.json)"
+							                          @click="this.downloadPeerIPList()"></PeerSettingsDropdownTool>
+						</div>
+						<div class="d-flex" style="padding-left: var(--bs-dropdown-item-padding-x); padding-right: var(--bs-dropdown-item-padding-x);">
+							<PeerSettingsDropdownTool icon="bi-body-text"
 							                          title="Configuration File"
 							                          @click="this.$emit('configurationFile')"></PeerSettingsDropdownTool>
-							<PeerSettingsDropdownTool icon="bi-share" 
+							<PeerSettingsDropdownTool icon="bi-share"
 							                          title="Share Peer"
 							                          @click="this.$emit('share')"></PeerSettingsDropdownTool>
 						</div>

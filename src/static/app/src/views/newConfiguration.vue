@@ -38,6 +38,7 @@ export default {
 				PostDown: "",
 				Table: "",
 				Protocol: "wg",
+				// AmneziaWG 2.0+ parameters
 				Jc: 5,
 				Jmin: 49,
 				Jmax: 998,
@@ -53,7 +54,17 @@ export default {
 				I2: "0",
 				I3: "0",
 				I4: "0",
-				I5: "0"
+				I5: "0",
+				// AmneziaWG 3.1 new parameters
+				HeaderProtectionKey: "",
+				ContentPaddingAddition: "0",
+				RekeyAfterTime: "0",
+				RekeyTimeout: "0",
+				RejectAfterTime: "0",
+				KeepaliveTimeout: "0",
+				MaxHandshakeAttempts: "0",
+				RandomTrailers: "off",
+				DisableCookies: "off"
 			},
 			numberOfAvailableIPs: "0",
 			error: false,
@@ -67,10 +78,10 @@ export default {
 	created() {
 		this.wireguardGenerateKeypair();
 
-		// Generate 4 random numbers for H1, H2, H3, H4
-		['H1', 'H2', 'H3', 'H4'].forEach(key => {
-			this.newConfiguration[key] = this.rand(1, 2**31);
-		});
+		// Generate 4 non-overlapping random ranges for H1, H2, H3, H4.
+		// Per AmneziaWG 3.1 docs the ranges must not intersect each other.
+		// Values 1/2/3/4 disable the corresponding mechanism, so we start from 10.
+		this.generateHeaderValues();
 
 		// Initialize I1 to I5 as "0"
 		['I1', 'I2', 'I3', 'I4', 'I5'].forEach(key => {
@@ -86,6 +97,23 @@ export default {
 			this.newConfiguration.PrivateKey = wg.privateKey;
 			this.newConfiguration.PublicKey = wg.publicKey;
 			this.newConfiguration.PresharedKey = wg.presharedKey;
+		},
+		generateHeaderValues(){
+			// 4 непересекающихся диапазона с разрывами между ними
+			const RANGE_SIZE = 1000;
+			let cursor = 10;
+			['H1', 'H2', 'H3', 'H4'].forEach((key) => {
+				const start = cursor + this.rand(1, RANGE_SIZE);
+				const end = start + this.rand(10, RANGE_SIZE);
+				this.newConfiguration[key] = `${start}-${end}`;
+				cursor = end;
+			});
+		},
+		generateHeaderProtectionKey(){
+			// Generate 32 random bytes and convert to hex (64 characters)
+			const array = new Uint8Array(32);
+			crypto.getRandomValues(array);
+			this.newConfiguration.HeaderProtectionKey = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
 		},
 		async saveNewConfiguration(){
 			if (this.goodToSubmit){
@@ -386,13 +414,87 @@ export default {
 									</div>
 								</div>
 
-								<div class="card rounded-3" 
+								<!-- AmneziaWG 2.0+ parameters -->
+								<div class="card rounded-3"
 								     v-if="this.newConfiguration.Protocol === 'awg'"
-								     v-for="key in ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4', 'I1', 'I2', 'I3', 'I4', 'I5']">
+								     v-for="key in ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'I1', 'I2', 'I3', 'I4', 'I5']">
 									<div class="card-header">{{ key }}</div>
 									<div class="card-body">
 										<input type="text"
 										       class="form-control font-monospace" :id="key" v-model="this.newConfiguration[key]">
+									</div>
+								</div>
+
+								<!-- H1-H4: диапазоны не должны пересекаться -->
+								<div class="card rounded-3" v-if="this.newConfiguration.Protocol === 'awg'">
+									<div class="card-header d-flex align-items-center">
+										H1, H2, H3, H4
+										<button class="btn btn-sm btn-outline-primary ms-auto"
+										        type="button" @click="this.generateHeaderValues()">
+											<i class="bi bi-arrow-repeat me-1"></i>
+											<LocaleText t="Regenerate"></LocaleText>
+										</button>
+									</div>
+									<div class="card-body d-flex flex-column gap-2">
+										<input type="text"
+										       class="form-control font-monospace" id="H1" v-model="this.newConfiguration.H1"
+										       placeholder="например, 10-1000">
+										<input type="text"
+										       class="form-control font-monospace" id="H2" v-model="this.newConfiguration.H2"
+										       placeholder="например, 2000-3000">
+										<input type="text"
+										       class="form-control font-monospace" id="H3" v-model="this.newConfiguration.H3"
+										       placeholder="например, 4000-5000">
+										<input type="text"
+										       class="form-control font-monospace" id="H4" v-model="this.newConfiguration.H4"
+										       placeholder="например, 6000-7000">
+										<div class="form-text">
+											<LocaleText t="H1-H4 ranges must not overlap each other"></LocaleText>
+										</div>
+									</div>
+								</div>
+								
+								<!-- AmneziaWG 3.1 new parameters -->
+								<div class="card rounded-3" 
+								     v-if="this.newConfiguration.Protocol === 'awg'">
+									<div class="card-header">HeaderProtectionKey</div>
+									<div class="card-body">
+										<div class="input-group">
+											<input type="text"
+											       class="form-control font-monospace" 
+											       id="HeaderProtectionKey" 
+											       v-model="this.newConfiguration.HeaderProtectionKey"
+											       placeholder="64 hex characters (32 bytes)">
+											<button class="btn btn-outline-primary" type="button"
+											        @click="generateHeaderProtectionKey()">
+												<i class="bi bi-arrow-repeat"></i>
+											</button>
+										</div>
+										<div class="form-text">32-byte key for Header Protection (ChaCha20)</div>
+									</div>
+								</div>
+								
+								<div class="card rounded-3" 
+								     v-if="this.newConfiguration.Protocol === 'awg'"
+								     v-for="key in ['ContentPaddingAddition', 'RekeyAfterTime', 'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout', 'MaxHandshakeAttempts']">
+									<div class="card-header">{{ key }}</div>
+									<div class="card-body">
+										<input type="text"
+										       class="form-control font-monospace" :id="key" v-model="this.newConfiguration[key]"
+										       placeholder="e.g., 10-100 or 50">
+										<div class="form-text">uint16 range (0-65535)</div>
+									</div>
+								</div>
+								
+								<div class="card rounded-3" 
+								     v-if="this.newConfiguration.Protocol === 'awg'"
+								     v-for="key in ['RandomTrailers', 'DisableCookies']">
+									<div class="card-header">{{ key }}</div>
+									<div class="card-body">
+										<select class="form-select" :id="key" v-model="this.newConfiguration[key]">
+											<option value="off">off</option>
+											<option value="on">on</option>
+										</select>
 									</div>
 								</div>
 							</div>

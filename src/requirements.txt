@@ -15,3 +15,4 @@ PyMySQL==1.1.2
 tzlocal==5.3.1
 python-jose==3.5.0
 pydantic==2.12.5
+pywebpush>=2.0.0,<3.0.0

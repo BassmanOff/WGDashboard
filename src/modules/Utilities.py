@@ -114,3 +114,26 @@ def ValidatePasswordStrength(password: str) -> tuple[bool, str] | tuple[bool, No
         return False, "Password must contain at least 1 special character from $&+,:;=?@#|'<>.-^*()%!~_-"
     
     return True, None
+
+def ValidateSplitTunnelList(ips: str) -> tuple[bool, str | None]:
+    """
+    Проверяет список подсетей раздельного туннелирования.
+    Принимает формат через запятую или пробелы: "10.0.0.0/8, 172.16.0.0/12".
+    Пустая строка допустима (список не задан).
+    Возвращает (True, None) или (False, описание первой ошибки).
+    """
+    if ips is None:
+        return True, None
+    if not isinstance(ips, str):
+        return False, "Split tunneling list must be a string"
+
+    entries = [x.strip() for x in re.split(r"[\s,]+", ips.strip()) if len(x.strip()) > 0]
+    if len(entries) == 0:
+        return True, None
+
+    for entry in entries:
+        try:
+            ipaddress.ip_network(entry, strict=False)
+        except ValueError as e:
+            return False, f"'{entry}' is not a valid IP address or CIDR ({e})"
+    return True, None

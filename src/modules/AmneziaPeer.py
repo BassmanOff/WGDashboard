@@ -7,7 +7,7 @@ import uuid
 
 from flask import current_app
 from .Peer import Peer
-from .Utilities import CheckAddress, ValidateDNSAddress, GenerateWireguardPublicKey
+from .Utilities import CheckAddress, ValidateDNSAddress, GenerateWireguardPublicKey, ValidateSplitTunnelList
 
 
 class AmneziaPeer(Peer):
@@ -22,7 +22,9 @@ class AmneziaPeer(Peer):
                    endpoint_allowed_ip: str,
                    mtu: int,
                    keepalive: int,
-                   notes: str
+                   notes: str,
+                   split_tunnel_ips: str = "",
+                   split_tunnel_mode: str = "include"
                    ) -> tuple[bool, str | None]:
 
         if not self.configuration.getStatus():
@@ -50,6 +52,13 @@ class AmneziaPeer(Peer):
 
         if not ValidateDNSAddress(dns_addresses):
             return False, f"DNS IP-Address or FQDN is incorrect"
+
+        splitValid, splitMsg = ValidateSplitTunnelList(split_tunnel_ips)
+        if not splitValid:
+            return False, splitMsg
+
+        if split_tunnel_mode not in ("include", "exclude"):
+            return False, "Split tunnel mode must be 'include' or 'exclude'"
 
         if isinstance(mtu, str):
             mtu = 0
@@ -108,7 +117,9 @@ class AmneziaPeer(Peer):
                         "mtu": mtu,
                         "keepalive": keepalive,
                         "notes": notes,
-                        "preshared_key": preshared_key
+                        "preshared_key": preshared_key,
+                        "split_tunnel_ips": split_tunnel_ips,
+                        "split_tunnel_mode": split_tunnel_mode
                     }).where(
                         self.configuration.peersTable.c.id == self.id
                     )

@@ -4,7 +4,7 @@ Peer
 import base64
 import datetime
 import json
-import os, subprocess, uuid, random, re
+import os, subprocess, uuid, random, re, ipaddress
 from datetime import timedelta
 
 import jinja2
@@ -12,7 +12,7 @@ import sqlalchemy as db
 from .PeerJob import PeerJob
 from  flask import current_app
 from .PeerShareLink import PeerShareLink
-from .Utilities import GenerateWireguardPublicKey, CheckAddress, ValidateDNSAddress
+from .Utilities import GenerateWireguardPublicKey, CheckAddress, ValidateDNSAddress, ValidateSplitTunnelList
 
 
 class Peer:
@@ -38,6 +38,9 @@ class Peer:
         self.notes = tableData.get("notes", "")
         self.remote_endpoint = tableData["remote_endpoint"]
         self.preshared_key = tableData["preshared_key"]
+        # Split tunneling fields
+        self.split_tunnel_ips = tableData.get("split_tunnel_ips", "")
+        self.split_tunnel_mode = tableData.get("split_tunnel_mode", "include")
         self.jobs: list[PeerJob] = []
         self.ShareLink: list[PeerShareLink] = []
         self.getJobs()
@@ -59,7 +62,9 @@ class Peer:
                    endpoint_allowed_ip: str,
                    mtu: int,
                    keepalive: int,
-                   notes: str
+                   notes: str,
+                   split_tunnel_ips: str = "",
+                   split_tunnel_mode: str = "include"
                    ) -> tuple[bool, str | None]:
 
         if not self.configuration.getStatus():
@@ -87,6 +92,13 @@ class Peer:
 
         if not ValidateDNSAddress(dns_addresses):
             return False, f"DNS IP-Address or FQDN is incorrect"
+
+        splitValid, splitMsg = ValidateSplitTunnelList(split_tunnel_ips)
+        if not splitValid:
+            return False, splitMsg
+
+        if split_tunnel_mode not in ("include", "exclude"):
+            return False, "Split tunnel mode must be 'include' or 'exclude'"
 
         if isinstance(mtu, str):
             mtu = 0
@@ -144,7 +156,9 @@ class Peer:
                         "mtu": mtu,
                         "keepalive": keepalive,
                         "notes": notes,
-                        "preshared_key": preshared_key
+                        "preshared_key": preshared_key,
+                        "split_tunnel_ips": split_tunnel_ips,
+                        "split_tunnel_mode": split_tunnel_mode
                     }).where(
                         self.configuration.peersTable.c.id == self.id
                     )
@@ -191,6 +205,7 @@ class Peer:
 
         if self.configuration.Protocol == "awg":
             interfaceSection.update({
+                # AmneziaWG 2.0+ parameters
                 "Jc": self.configuration.Jc,
                 "Jmin": self.configuration.Jmin,
                 "Jmax": self.configuration.Jmax,
@@ -206,7 +221,17 @@ class Peer:
                 "I2": self.configuration.I2,
                 "I3": self.configuration.I3,
                 "I4": self.configuration.I4,
-                "I5": self.configuration.I5
+                "I5": self.configuration.I5,
+                # AmneziaWG 3.1 new parameters
+                "HeaderProtectionKey": self.configuration.HeaderProtectionKey,
+                "ContentPaddingAddition": self.configuration.ContentPaddingAddition,
+                "RekeyAfterTime": self.configuration.RekeyAfterTime,
+                "RekeyTimeout": self.configuration.RekeyTimeout,
+                "RejectAfterTime": self.configuration.RejectAfterTime,
+                "KeepaliveTimeout": self.configuration.KeepaliveTimeout,
+                "MaxHandshakeAttempts": self.configuration.MaxHandshakeAttempts,
+                "RandomTrailers": self.configuration.RandomTrailers,
+                "DisableCookies": self.configuration.DisableCookies
             })
 
         peerSection = {
@@ -255,6 +280,64 @@ class Peer:
                         else self.configuration.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1])
             })
         return final
+
+    def downloadPeerConf(self) -> dict[str, str]:
+        """Конфигурация пира в формате .conf (AmneziaWG / WireGuard)"""
+        peer_config = self.downloadPeer()
+        return {
+            "fileName": f"{peer_config['fileName']}.conf",
+            "file": peer_config['file']
+        }
+
+    def downloadPeerJSON(self) -> dict[str, str]:
+        """Конфигурация пира в формате .json (импорт в AmneziaVPN)"""
+        peer_config = self.downloadPeer()
+        return {
+            "fileName": f"{peer_config['fileName']}.json",
+            "file": json.dumps({
+                "containers": [{
+                    "awg" if self.configuration.Protocol == "awg" else "wireguard": {
+                        "isThirdPartyConfig": True,
+                        "last_config": peer_config['file'],
+                        "port": self.configuration.ListenPort,
+                        "transport_proto": "udp"
+                    },
+                    "container": "amnezia-awg" if self.configuration.Protocol == "awg" else "amnezia-wg"
+                }],
+                "defaultContainer": "amnezia-awg" if self.configuration.Protocol == "awg" else "amnezia-wg",
+                "description": self.name,
+                "hostName": (
+                    self.configuration.configurationInfo.OverridePeerSettings.PeerRemoteEndpoint
+                        if self.configuration.configurationInfo.OverridePeerSettings.PeerRemoteEndpoint
+                        else self.configuration.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1])
+            }, indent=2, ensure_ascii=False)
+        }
+
+    def downloadPeerIPList(self) -> dict[str, str]:
+        """
+        Список подсетей раздельного туннелирования в формате AmneziaVPN (ip-list.json).
+
+        Формат: [{"hostname": "<CIDR>", "ip": ""}, ...]
+        Импортируется в AmneziaVPN: Настройки -> Раздельное туннелирование -> "Адреса из списка без VPN".
+        """
+        entries = []
+        for raw in re.split(r"[\s,]+", (self.split_tunnel_ips or "").strip()):
+            raw = raw.strip()
+            if len(raw) == 0:
+                continue
+            try:
+                ipaddress.ip_network(raw, strict=False)
+            except ValueError as e:
+                # Список валидируется при сохранении пира, сюда может попасть
+                # только запись, созданная до включения валидации
+                current_app.logger.error(f"Peer {self.id} has an invalid split tunnel entry: {raw} ({e})")
+                continue
+            entries.append({"hostname": raw, "ip": ""})
+        safeName = re.sub(r'[.,/?<>\\:*|"\'\s]+', '', self.name or "") or "UntitledPeer"
+        return {
+            "fileName": f"{safeName}_ip-list.json",
+            "file": json.dumps(entries, ensure_ascii=False)
+        }
 
     def getJobs(self):
         self.jobs = self.configuration.AllPeerJobs.searchJob(self.configuration.Name, self.id)

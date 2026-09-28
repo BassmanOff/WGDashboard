@@ -57,6 +57,11 @@ class DashboardClients:
             'DashboardClientsInfo', self.metadata,
             db.Column('ClientID', db.String(255), nullable=False, primary_key=True),
             db.Column('Name', db.String(500)),
+            # --- Трекер оплат (используется администратором вручную) ---
+            db.Column('Telegram', db.String(255)),
+            db.Column('Comment', db.Text),
+            db.Column('PaidUntil',
+                      (db.DATETIME if 'sqlite:///' in ConnectionString("wgdashboard") else db.TIMESTAMP)),
             extend_existing=True,   
         )
         
@@ -73,12 +78,42 @@ class DashboardClients:
         )
 
         self.metadata.create_all(self.engine)
+        self.__migrateClientsInfoTable()
         self.Clients = {}
         self.ClientsRaw = []
         self.__getClients()
         self.DashboardClientsTOTP = DashboardClientsTOTP()
         self.DashboardClientsPeerAssignment = DashboardClientsPeerAssignment(wireguardConfigurations)
         
+    def __migrateClientsInfoTable(self):
+        """
+        create_all() не добавляет колонки в уже существующие таблицы,
+        поэтому недостающие колонки добавляем через ALTER TABLE.
+        """
+        expected = {
+            'Telegram': db.String(255),
+            'Comment': db.Text,
+            'PaidUntil': (db.DATETIME if 'sqlite:///' in ConnectionString("wgdashboard") else db.TIMESTAMP),
+        }
+        try:
+            inspector = db.inspect(self.engine)
+            if not inspector.has_table('DashboardClientsInfo'):
+                return
+            existing = [c['name'] for c in inspector.get_columns('DashboardClientsInfo')]
+            with self.engine.begin() as conn:
+                preparer = self.engine.dialect.identifier_preparer
+                for col_name, col_type in expected.items():
+                    if col_name in existing:
+                        continue
+                    type_str = col_type().compile(dialect=self.engine.dialect)
+                    conn.execute(db.text(
+                        f"ALTER TABLE {preparer.quote_identifier('DashboardClientsInfo')} "
+                        f"ADD COLUMN {preparer.quote_identifier(col_name)} {type_str}"
+                    ))
+                    self.logger.log(Message=f"Clients table migration: added column '{col_name}'")
+        except Exception as e:
+            self.logger.log(Status="false", Message=f"Clients table migration failed: {e}")
+
     def __getClients(self):
         with self.engine.connect() as conn:
             localClients = db.select(
@@ -99,13 +134,17 @@ class DashboardClients:
             
             union = db.union(localClients, oidcClients).alias("U")
             
-            self.ClientsRaw = conn.execute(
+            self.ClientsRaw = [dict(x) for x in conn.execute(
                 db.select(
                     union, 
-                    self.dashboardClientsInfoTable.c.Name
+                    self.dashboardClientsInfoTable.c.Name,
+                    self.dashboardClientsInfoTable.c.Telegram,
+                    self.dashboardClientsInfoTable.c.Comment,
+                    self.dashboardClientsInfoTable.c.PaidUntil
                 ).outerjoin(self.dashboardClientsInfoTable, 
                             union.c.ClientID == self.dashboardClientsInfoTable.c.ClientID)
-            ).mappings().fetchall()
+            ).mappings().fetchall()]
+            self.__annotatePaymentStatus()
             
             groups = set(map(lambda c: c.get('ClientGroup'), self.ClientsRaw))
             gr = {}
@@ -117,6 +156,41 @@ class DashboardClients:
                 ]
             self.Clients = gr
             
+    def __annotatePaymentStatus(self):
+        """
+        Добавляет к каждому клиенту вычисленные поля:
+          PaymentStatus: 'unset' | 'active' | 'expiring' | 'expired'
+          DaysRemaining: целое число дней до PaidUntil (None, если срок не задан)
+        """
+        today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        for c in self.ClientsRaw:
+            paidUntil = c.get('PaidUntil')
+            if paidUntil is None:
+                c['PaymentStatus'] = 'unset'
+                c['DaysRemaining'] = None
+                c['PaidUntilFormatted'] = None
+                continue
+            if isinstance(paidUntil, str):
+                try:
+                    paidUntil = datetime.datetime.strptime(paidUntil[:19], "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    paidUntil = None
+            if paidUntil is None:
+                c['PaymentStatus'] = 'unset'
+                c['DaysRemaining'] = None
+                c['PaidUntilFormatted'] = None
+                continue
+            # Срок считается истёкшим в конце указанного дня
+            days = (paidUntil.date() - today.date()).days
+            c['DaysRemaining'] = days
+            c['PaidUntilFormatted'] = paidUntil.strftime("%Y-%m-%d")
+            if days < 0:
+                c['PaymentStatus'] = 'expired'
+            elif days <= 7:
+                c['PaymentStatus'] = 'expiring'
+            else:
+                c['PaymentStatus'] = 'active'
+
     def GetAllClients(self):
         self.__getClients()
         return self.Clients
@@ -133,14 +207,18 @@ class DashboardClients:
         return client
     
     def GetClientProfile(self, ClientID):
+        """
+        Возвращает профиль клиента для клиентского интерфейса.
+        ВАЖНО: служебные поля администратора (Telegram, Comment, PaidUntil)
+        намеренно не возвращаются — они видны только администратору.
+        """
         with self.engine.connect() as conn:
-            return dict(conn.execute(
-                db.select(
-                    *[c for c in self.dashboardClientsInfoTable.c if c.name != 'ClientID']
-                ).where(
+            row = conn.execute(
+                db.select(self.dashboardClientsInfoTable.c.Name).where(
                     self.dashboardClientsInfoTable.c.ClientID == ClientID
                 )
-            ).mappings().fetchone())
+            ).mappings().fetchone()
+            return dict(row) if row is not None else {}
     
     def SignIn_ValidatePassword(self, Email, Password) -> bool:
         if not all([Email, Password]):
@@ -382,6 +460,94 @@ class DashboardClients:
             self.logger.log(Status="false", Message=f"User {ClientID} updated name to {Name} failed")
             return False
         return True
+
+    def UpdateClientPaymentInfo(self, ClientID, Telegram=None, Comment=None, PaidUntil=None) -> tuple[bool, str | None]:
+        """
+        Обновляет контактные данные и срок оплаты клиента.
+        None означает "не менять", пустая строка — "очистить".
+        """
+        if self.GetClient(ClientID) is None:
+            return False, "Client does not exist"
+
+        values = {}
+        if Telegram is not None:
+            values["Telegram"] = Telegram.strip()
+        if Comment is not None:
+            values["Comment"] = Comment
+        if PaidUntil is not None:
+            if PaidUntil == "":
+                values["PaidUntil"] = None
+            else:
+                try:
+                    values["PaidUntil"] = datetime.datetime.strptime(
+                        PaidUntil, "%Y-%m-%d"
+                    ).replace(hour=23, minute=59, second=59, microsecond=0)
+                except ValueError:
+                    return False, "PaidUntil must be in YYYY-MM-DD format"
+
+        if len(values) == 0:
+            return False, "Nothing to update"
+
+        try:
+            with self.engine.begin() as conn:
+                updated = conn.execute(
+                    self.dashboardClientsInfoTable.update().values(values).where(
+                        self.dashboardClientsInfoTable.c.ClientID == ClientID
+                    )
+                ).rowcount
+                if updated == 0:
+                    # Записи об информации может не быть (например, клиент из старой версии)
+                    base = {"ClientID": ClientID}
+                    base.update({k: v for k, v in values.items() if k != 'Name'})
+                    conn.execute(
+                        self.dashboardClientsInfoTable.insert().values(base)
+                    )
+            self.logger.log(
+                Message=f"User {ClientID} payment info updated: {', '.join(values.keys())}")
+        except Exception as e:
+            self.logger.log(Status="false",
+                            Message=f"User {ClientID} payment info update failed, reason: {e}")
+            return False, "Update failed"
+
+        self.__getClients()
+        return True, None
+
+    def ExtendClientPayment(self, ClientID, Days: int) -> tuple[bool, str | None]:
+        """Продлевает срок оплаты на N дней от текущего (или от сегодня, если срок истёк)."""
+        if self.GetClient(ClientID) is None:
+            return False, "Client does not exist"
+        if type(Days) is not int or Days <= 0 or Days > 3650:
+            return False, "Days must be an integer between 1 and 3650"
+
+        today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        current = None
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                db.select(self.dashboardClientsInfoTable.c.PaidUntil).where(
+                    self.dashboardClientsInfoTable.c.ClientID == ClientID
+                )
+            ).mappings().fetchone()
+            if row is not None:
+                current = row.get('PaidUntil')
+        if isinstance(current, str):
+            try:
+                current = datetime.datetime.strptime(current[:19], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                current = None
+
+        # Если срок ещё не истёк, продлеваем от него, иначе — от сегодня
+        base = current if (current is not None and current.date() >= today.date()) else today
+        newDate = (base + datetime.timedelta(days=Days)).replace(
+            hour=23, minute=59, second=59, microsecond=0)
+
+        return self.UpdateClientPaymentInfo(
+            ClientID, PaidUntil=newDate.strftime("%Y-%m-%d"))
+
+    def GetOverdueClients(self) -> list:
+        """Клиенты с истёкшим сроком оплаты (для сводки/уведомлений)."""
+        self.__getClients()
+        return list(filter(lambda c: c.get('PaymentStatus') == 'expired',
+                           self.ClientsRaw))
     
     def DeleteClient(self, ClientID):
         try:

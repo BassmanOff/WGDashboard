@@ -36,6 +36,7 @@ const clientProfile = reactive({
 if (client.value){
 	watch(() => client.value.ClientID, async () => {
 		clientProfile.Name = client.value.Name;
+		loadPaymentInfo()
 		await getAssignedPeers()
 	})
 	await getAssignedPeers()
@@ -64,6 +65,82 @@ const updateProfile = async () => {
 		updatingProfile.value = false
 	})
 }
+
+// --- Трекер оплат (только для администратора) ---
+const payment = reactive({
+	Telegram: '',
+	Comment: '',
+	PaidUntil: '',
+	Days: 30
+})
+const savingPayment = ref(false)
+const extendingPayment = ref(false)
+
+const paymentStatus = computed(() => client.value?.PaymentStatus || 'unset')
+
+const paymentBadge = computed(() => {
+	switch (paymentStatus.value){
+		case 'active':
+			return {cls: 'text-bg-success', icon: 'bi-check-circle-fill', text: 'Paid'}
+		case 'expiring':
+			return {cls: 'text-bg-warning', icon: 'bi-exclamation-triangle-fill', text: 'Expiring soon'}
+		case 'expired':
+			return {cls: 'text-bg-danger', icon: 'bi-x-octagon-fill', text: 'Payment overdue'}
+		default:
+			return {cls: 'text-bg-secondary', icon: 'bi-dash-circle', text: 'No payment date set'}
+	}
+})
+
+const loadPaymentInfo = () => {
+	payment.Telegram = client.value?.Telegram || ''
+	payment.Comment = client.value?.Comment || ''
+	payment.PaidUntil = client.value?.PaidUntilFormatted || ''
+}
+
+const savePaymentInfo = async () => {
+	savingPayment.value = true
+	await fetchPost("/api/clients/updatePaymentInfo", {
+		ClientID: client.value.ClientID,
+		Telegram: payment.Telegram,
+		Comment: payment.Comment,
+		PaidUntil: payment.PaidUntil
+	}, async (res) => {
+		if (res.status){
+			Object.assign(client.value, res.data)
+			loadPaymentInfo()
+			await assignmentStore.getClients()
+			dashboardConfigurationStore.newMessage("Server", "Payment info saved", "success")
+		}else{
+			dashboardConfigurationStore.newMessage("Server", res.message, "danger")
+		}
+		savingPayment.value = false
+	})
+}
+
+const extendPayment = async (days) => {
+	extendingPayment.value = true
+	await fetchPost("/api/clients/extendPayment", {
+		ClientID: client.value.ClientID,
+		Days: days
+	}, async (res) => {
+		if (res.status){
+			Object.assign(client.value, res.data)
+			loadPaymentInfo()
+			await assignmentStore.getClients()
+			dashboardConfigurationStore.newMessage("Server", `Extended by ${days} day(s)`, "success")
+		}else{
+			dashboardConfigurationStore.newMessage("Server", res.message, "danger")
+		}
+		extendingPayment.value = false
+	})
+}
+
+const clearPaymentDate = async () => {
+	payment.PaidUntil = ''
+	await savePaymentInfo()
+}
+
+loadPaymentInfo()
 const deleteSuccess = async () => {
 	await router.push('/clients')
 	await assignmentStore.getClients()
@@ -108,6 +185,91 @@ const deleteSuccess = async () => {
 						<i class="bi bi-save-fill"></i>
 					</button>
 				</div>
+			</div>
+		</div>
+		<!-- Трекер оплат: только для администратора, трафик не отключается -->
+		<div class="p-4 border-bottom" v-if="client">
+			<div class="d-flex align-items-center gap-2 mb-3">
+				<i class="bi bi-cash-coin text-muted"></i>
+				<strong class="small">
+					<LocaleText t="Payment"></LocaleText>
+				</strong>
+				<span class="badge rounded-pill ms-auto" :class="paymentBadge.cls">
+					<i class="bi me-1" :class="paymentBadge.icon"></i>
+					{{ paymentBadge.text }}
+				</span>
+			</div>
+
+			<div class="row g-2">
+				<div class="col-sm-4">
+					<label class="form-label">
+						<small class="text-muted">
+							<LocaleText t="Telegram"></LocaleText>
+						</small>
+					</label>
+					<input type="text" class="form-control form-control-sm rounded-3"
+					       v-model="payment.Telegram" placeholder="@username">
+				</div>
+				<div class="col-sm-4">
+					<label class="form-label">
+						<small class="text-muted">
+							<LocaleText t="Paid Until"></LocaleText>
+						</small>
+					</label>
+					<input type="date" class="form-control form-control-sm rounded-3"
+					       v-model="payment.PaidUntil">
+					<div class="form-text" v-if="client.DaysRemaining !== null && client.DaysRemaining !== undefined">
+						<LocaleText v-if="client.DaysRemaining < 0"
+						            :t="'Overdue by ' + Math.abs(client.DaysRemaining) + ' day(s)'"></LocaleText>
+						<LocaleText v-else
+						            :t="client.DaysRemaining + ' day(s) left'"></LocaleText>
+					</div>
+				</div>
+				<div class="col-sm-4">
+					<label class="form-label">
+						<small class="text-muted">
+							<LocaleText t="Extend by"></LocaleText>
+						</small>
+					</label>
+					<div class="input-group input-group-sm">
+						<input type="number" min="1" max="3650"
+						       class="form-control rounded-3"
+						       v-model.number="payment.Days">
+						<button class="btn btn-outline-primary"
+						        :disabled="extendingPayment"
+						        @click="extendPayment(payment.Days)">
+							<LocaleText t="Extend"></LocaleText>
+						</button>
+					</div>
+				</div>
+				<div class="col-12">
+					<label class="form-label">
+						<small class="text-muted">
+							<LocaleText t="Comment"></LocaleText>
+						</small>
+					</label>
+					<textarea class="form-control form-control-sm rounded-3" rows="2"
+					          v-model="payment.Comment"
+					          placeholder="Payment notes, method, anything for your own reference"></textarea>
+				</div>
+			</div>
+
+			<div class="d-flex align-items-center gap-2 mt-3">
+				<small class="text-muted fst-italic">
+					<LocaleText t="Payment status is only visible to the administrator. The client is never notified and access is not restricted."></LocaleText>
+				</small>
+				<button class="btn btn-sm rounded-3 bg-primary-subtle border-primary-subtle text-primary-emphasis ms-auto"
+				        :disabled="savingPayment"
+				        @click="savePaymentInfo()">
+					<i class="bi bi-save-fill me-1"></i>
+					<LocaleText t="Save"></LocaleText>
+				</button>
+				<button class="btn btn-sm rounded-3 bg-secondary-subtle border-secondary-subtle text-secondary-emphasis"
+				        v-if="client.PaidUntilFormatted"
+				        :disabled="savingPayment"
+				        @click="clearPaymentDate()">
+					<LocaleText t="Clear date"></LocaleText>
+				</button>
 			</div>
 		</div>
 		<div style="flex: 1 0 0; overflow-y: scroll;">

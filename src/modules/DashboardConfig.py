@@ -21,7 +21,7 @@ class DashboardConfig:
             open(DashboardConfig.ConfigurationFilePath, "x")
         self.__config = configparser.RawConfigParser(strict=False)
         self.__config.read_file(open(DashboardConfig.ConfigurationFilePath, "r+"))
-        self.hiddenAttribute = ["totp_key", "auth_req"]
+        self.hiddenAttribute = ["totp_key", "auth_req", "secret_key"]
         self.__default = {
             "Account": {
                 "username": "admin",
@@ -81,6 +81,12 @@ class DashboardConfig:
                 "enable": "true",
                 "sign_up": "true"
             },
+            "Push": {
+                # Интервал проверки в секундах (минимум 300, максимум 604800 = 7 суток)
+                "check_interval": "86400",
+                # Предупреждать за N дней до конца оплаты (0 = не предупреждать)
+                "expiring_days": "7"
+            },
             "WireGuardConfiguration": {
                 "autostart": "",
                 "peer_tracking": "false"
@@ -93,12 +99,27 @@ class DashboardConfig:
                 if not exist:
                     self.SetConfig(section, key, value, True)
 
+        self.__ensureSecretKey()
+
         self.engine = db.create_engine(ConnectionString('wgdashboard'))
         self.dbMetadata = db.MetaData()
         self.__createAPIKeyTable()
         self.DashboardAPIKeys = self.__getAPIKeys()
         self.APIAccessed = False
         self.SetConfig("Server", "version", DashboardConfig.DashboardVersion)
+
+    def __ensureSecretKey(self):
+        """
+        Ключ подписи cookie-сессий. Генерируется один раз и хранится в .ini,
+        иначе каждый перезапуск панели разлогинивал бы всех пользователей
+        (и заставлял заново подтверждать 2FA).
+        """
+        _, existing = self.GetConfig("Server", "secret_key")
+        if existing and len(str(existing)) >= 32:
+            return
+        newKey = secrets.token_urlsafe(48)
+        # init=True, т.к. secret_key в hiddenAttribute
+        self.SetConfig("Server", "secret_key", newKey, True)
 
     def EnsureDatabaseIntegrity(self, wireguardConfigurations):
         expected_columns = {
@@ -121,7 +142,9 @@ class DashboardConfig:
             'keepalive': db.Integer,
             'notes': db.Text,
             'remote_endpoint': db.String(255),
-            'preshared_key': db.String(255)
+            'preshared_key': db.String(255),
+            'split_tunnel_ips': db.Text,
+            'split_tunnel_mode': db.String(10)
         }
 
         inspector = db.inspect(self.engine)

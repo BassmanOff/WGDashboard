@@ -1,5 +1,5 @@
 import logging
-import random, shutil, sqlite3, configparser, hashlib, ipaddress, json, os, secrets, subprocess
+import random, shutil, sqlite3, configparser, hashlib, ipaddress, json, os, subprocess
 import time, re, uuid, bcrypt, psutil, pyotp, threading
 import traceback
 from uuid import uuid4
@@ -30,6 +30,9 @@ from modules.PeerJobs import PeerJobs
 from modules.DashboardConfig import DashboardConfig
 from modules.WireguardConfiguration import WireguardConfiguration
 from modules.AmneziaConfiguration import AmneziaConfiguration
+from modules.AmneziaValidation import (
+    ValidateAmneziaWG31Params, ValidateH1H4NonOverlapping
+)
 
 from client import createClientBlueprint
 
@@ -38,6 +41,7 @@ from logging.config import dictConfig
 from modules.DashboardClients import DashboardClients
 from modules.DashboardPlugins import DashboardPlugins
 from modules.DashboardWebHooks import DashboardWebHooks
+from modules.DashboardPushNotifications import DashboardPushNotifications
 from modules.NewConfigurationTemplates import NewConfigurationTemplates
 
 class CustomJsonEncoder(DefaultJSONProvider):
@@ -67,6 +71,13 @@ def ResponseObject(status=True, message=None, data=None, status_code = 200) -> F
     response.status_code = status_code
     response.content_type = "application/json"
     return response
+
+def __findPeer(configName: str, peerId: str):
+    """Возвращает объект пира или None, если конфигурация/пир не найдены."""
+    if peerId is None or len(peerId) == 0 or configName not in WireguardConfigurations.keys():
+        return None
+    foundPeer, peer = WireguardConfigurations[configName].searchPeer(peerId)
+    return peer if foundPeer else None
 
 '''
 Flask App
@@ -124,6 +135,47 @@ def peerJobScheduleBackgroundThread():
             except Exception as e:
                 app.logger.error("Background Thread #2 Error", e)
 
+def pushNotificationBackgroundThread():
+    """
+    Периодически проверяет клиентов и присылает push о просроченных оплатах.
+    Интервал берётся из настроек (Push.check_interval) и перечитывается
+    каждый цикл, поэтому изменение настройки применяется без перезапуска.
+    Работает только если на панель есть хотя бы одна подписка.
+    """
+    with app.app_context():
+        app.logger.info("Background Thread #3 (push notifications) Started")
+        app.logger.info("Background Thread #3 PID:" + str(threading.get_native_id()))
+        time.sleep(30)
+        lastState: str = ""
+        lastCheck: float = 0
+        while True:
+            try:
+                if DashboardPushNotifications.GetSubscriptionCount() > 0:
+                    now = time.time()
+                    interval = DashboardPushNotifications.GetCheckInterval()
+                    if (now - lastCheck) >= interval:
+                        lastCheck = now
+                        expiringDays = DashboardPushNotifications.GetExpiringDays()
+                        overdue = DashboardClients.GetOverdueClients()
+                        expiring = [c for c in DashboardClients.GetAllClientsRaw()
+                                    if c.get('PaymentStatus') == 'expiring'
+                                    and (c.get('DaysRemaining') or 0) <= expiringDays]
+                        state = f"{len(overdue)}/{len(expiring)}"
+                        # Уведомляем только при изменении состояния, чтобы не спамить
+                        if state != lastState:
+                            lastState = state
+                            if len(overdue) > 0 or len(expiring) > 0:
+                                result = DashboardPushNotifications.SendPaymentReminders(
+                                    expiringDays=expiringDays)
+                                if result.get('error'):
+                                    app.logger.error(
+                                        f"Push reminder failed: {result['error']}")
+            except Exception as e:
+                app.logger.error("Background Thread #3 Error", e)
+            # Спим короткими отрезками, чтобы новая настройка интервала
+            # применялась сразу, а не по окончании текущего периода
+            time.sleep(30)
+
 def gunicornConfig():
     _, app_ip = DashboardConfig.GetConfig("Server", "app_ip")
     _, app_port = DashboardConfig.GetConfig("Server", "app_port")
@@ -178,6 +230,8 @@ def startThreads():
     bgThread.start()
     scheduleJobThread = threading.Thread(target=peerJobScheduleBackgroundThread, daemon=True)
     scheduleJobThread.start()
+    pushThread = threading.Thread(target=pushNotificationBackgroundThread, daemon=True)
+    pushThread.start()
 
 dictConfig({
     'version': 1,
@@ -194,7 +248,9 @@ WireguardConfigurations: dict[str, WireguardConfiguration] = {}
 CONFIGURATION_PATH = os.getenv('CONFIGURATION_PATH', '.')
 
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 5206928
-app.secret_key = secrets.token_urlsafe(32)
+# Ключ подписи cookie-сессий берётся из конфига: если генерировать его
+# при каждом запуске, любой рестарт панели разлогинивал бы всех клиентов.
+app.secret_key = DashboardConfig().GetConfig("Server", "secret_key")[1]
 app.json = CustomJsonEncoder(app)
 with app.app_context():
     SystemStatus = SystemStatus()
@@ -208,6 +264,8 @@ with app.app_context():
     NewConfigurationTemplates: NewConfigurationTemplates = NewConfigurationTemplates()
     InitWireguardConfigurationsList(startup=True)
     DashboardClients: DashboardClients = DashboardClients(WireguardConfigurations)
+    DashboardPushNotifications: DashboardPushNotifications = DashboardPushNotifications(
+        DashboardConfig, DashboardClients)
     app.register_blueprint(createClientBlueprint(WireguardConfigurations, DashboardConfig, DashboardClients))
 
 _, APP_PREFIX = DashboardConfig.GetConfig("Server", "app_prefix")
@@ -390,6 +448,20 @@ def API_addWireguardConfiguration():
     
     if data.get("Protocol") not in ProtocolsEnabled():
         return ResponseObject(False, "Please provide a valid protocol: wg / awg.")
+
+    # Валидация параметров AmneziaWG 2.0+/3.1 (только для протокола awg)
+    if data.get("Protocol") == "awg":
+        valid, errors = ValidateAmneziaWG31Params(data)
+        if not valid:
+            return ResponseObject(False, "Invalid AmneziaWG parameters",
+                                  f"; ".join(f"{k}: {v}" for k, v in errors.items()))
+
+        h_valid, h_msg = ValidateH1H4NonOverlapping(
+            data.get('H1', '1'), data.get('H2', '2'),
+            data.get('H3', '3'), data.get('H4', '4')
+        )
+        if not h_valid:
+            return ResponseObject(False, h_msg)
 
     # Check duplicate names, ports, address
     for i in WireguardConfigurations.values():
@@ -714,6 +786,8 @@ def API_updatePeerSettings(configName):
         mtu = data['mtu']
         keepalive = data['keepalive']
         notes = data.get('notes', '')
+        split_tunnel_ips = data.get('split_tunnel_ips', '')
+        split_tunnel_mode = data.get('split_tunnel_mode', 'include')
         wireguardConfig = WireguardConfigurations[configName]
         foundPeer, peer = wireguardConfig.searchPeer(id)
         if foundPeer:
@@ -726,7 +800,9 @@ def API_updatePeerSettings(configName):
                                               endpoint_allowed_ip,
                                               mtu,
                                               keepalive,
-                                              notes)
+                                              notes,
+                                              split_tunnel_ips,
+                                              split_tunnel_mode)
             else:
                 status, msg = peer.updatePeer(name,
                                               private_key,
@@ -736,7 +812,9 @@ def API_updatePeerSettings(configName):
                                               endpoint_allowed_ip,
                                               mtu,
                                               keepalive,
-                                              notes)
+                                              notes,
+                                              split_tunnel_ips,
+                                              split_tunnel_mode)
             wireguardConfig.getPeers()
             DashboardWebHooks.RunWebHook('peer_updated', {
                 "configuration": wireguardConfig.Name,
@@ -1027,6 +1105,30 @@ def API_downloadPeer(configName):
     if len(data['id']) == 0 or not peerFound:
         return ResponseObject(False, "Peer does not exist")
     return ResponseObject(data=peer.downloadPeer())
+
+@app.get(f"{APP_PREFIX}/api/downloadPeerConf/<configName>")
+def API_downloadPeerConf(configName):
+    """Конфигурация пира в формате .conf (AmneziaWG / WireGuard)"""
+    peer = __findPeer(configName, request.args.get('id'))
+    if peer is None:
+        return ResponseObject(False, "Configuration or Peer does not exist")
+    return ResponseObject(data=peer.downloadPeerConf())
+
+@app.get(f"{APP_PREFIX}/api/downloadPeerJSON/<configName>")
+def API_downloadPeerJSON(configName):
+    """Конфигурация пира в формате .json (импорт в AmneziaVPN)"""
+    peer = __findPeer(configName, request.args.get('id'))
+    if peer is None:
+        return ResponseObject(False, "Configuration or Peer does not exist")
+    return ResponseObject(data=peer.downloadPeerJSON())
+
+@app.get(f"{APP_PREFIX}/api/downloadPeerIPList/<configName>")
+def API_downloadPeerIPList(configName):
+    """Список подсетей раздельного туннелирования в формате AmneziaVPN (ip-list.json)"""
+    peer = __findPeer(configName, request.args.get('id'))
+    if peer is None:
+        return ResponseObject(False, "Configuration or Peer does not exist")
+    return ResponseObject(data=peer.downloadPeerIPList())
 
 @app.get(f"{APP_PREFIX}/api/downloadAllPeers/<configName>")
 def API_downloadAllPeers(configName):
@@ -1690,6 +1792,43 @@ def API_Clients_UpdateProfile():
     value = data.get('Name')
     return ResponseObject(status=DashboardClients.UpdateClientProfile(clientId, value))
 
+@app.post(f'{APP_PREFIX}/api/clients/updatePaymentInfo')
+def API_Clients_UpdatePaymentInfo():
+    data = request.get_json()
+    clientId = data.get("ClientID")
+    if not clientId:
+        return ResponseObject(False, "Please provide ClientID")
+    if not DashboardClients.GetClient(clientId):
+        return ResponseObject(False, "Client does not exist")
+
+    status, msg = DashboardClients.UpdateClientPaymentInfo(
+        clientId,
+        Telegram=data.get('Telegram'),
+        Comment=data.get('Comment'),
+        PaidUntil=data.get('PaidUntil')
+    )
+    if not status:
+        return ResponseObject(False, msg)
+    return ResponseObject(True, data=DashboardClients.GetClient(clientId))
+
+@app.post(f'{APP_PREFIX}/api/clients/extendPayment')
+def API_Clients_ExtendPayment():
+    data = request.get_json()
+    clientId = data.get("ClientID")
+    if not clientId:
+        return ResponseObject(False, "Please provide ClientID")
+    if not DashboardClients.GetClient(clientId):
+        return ResponseObject(False, "Client does not exist")
+
+    status, msg = DashboardClients.ExtendClientPayment(clientId, data.get('Days'))
+    if not status:
+        return ResponseObject(False, msg)
+    return ResponseObject(True, data=DashboardClients.GetClient(clientId))
+
+@app.get(f'{APP_PREFIX}/api/clients/overdueClients')
+def API_Clients_OverdueClients():
+    return ResponseObject(data=DashboardClients.GetOverdueClients())
+
 @app.post(f'{APP_PREFIX}/api/clients/deleteClient')
 def API_Clients_DeleteClient():
     data = request.get_json()
@@ -1699,6 +1838,76 @@ def API_Clients_DeleteClient():
     if not DashboardClients.GetClient(clientId):
         return ResponseObject(False, "Client does not exist")
     return ResponseObject(status=DashboardClients.DeleteClient(clientId))   
+
+@app.get(f'{APP_PREFIX}/api/push/vapidPublicKey')
+def API_Push_VapidPublicKey():
+    """Публичный VAPID-ключ для подписки браузера."""
+    return ResponseObject(data=DashboardPushNotifications.GetVapidPublicKey())
+
+@app.post(f'{APP_PREFIX}/api/push/subscribe')
+def API_Push_Subscribe():
+    data = request.get_json()
+    if not data:
+        return ResponseObject(False, "Invalid request.")
+    subscription = data.get('subscription', data)
+    status, msg = DashboardPushNotifications.Subscribe(
+        endpoint=subscription.get('endpoint'),
+        p256dh=(subscription.get('keys') or {}).get('p256dh'),
+        auth=(subscription.get('keys') or {}).get('auth'),
+        userAgent=request.headers.get('User-Agent', ''),
+        origin=request.url_root.rstrip('/')
+    )
+    return ResponseObject(status, msg)
+
+@app.post(f'{APP_PREFIX}/api/push/unsubscribe')
+def API_Push_Unsubscribe():
+    data = request.get_json()
+    if not data:
+        return ResponseObject(False, "Invalid request.")
+    subscription = data.get('subscription', data)
+    return ResponseObject(*DashboardPushNotifications.Unsubscribe(
+        subscription.get('endpoint')))
+
+@app.get(f'{APP_PREFIX}/api/push/status')
+def API_Push_Status():
+    return ResponseObject(data={
+        "subscriptions": DashboardPushNotifications.GetSubscriptionCount(),
+        "overdueClients": len(DashboardClients.GetOverdueClients())
+    })
+
+@app.get(f'{APP_PREFIX}/api/push/settings')
+def API_Push_GetSettings():
+    return ResponseObject(data=DashboardPushNotifications.GetSettings())
+
+@app.post(f'{APP_PREFIX}/api/push/settings')
+def API_Push_UpdateSettings():
+    data = request.get_json() or {}
+    status, msg = DashboardPushNotifications.UpdateSettings(
+        check_interval=data.get('check_interval'),
+        expiring_days=data.get('expiring_days')
+    )
+    if not status:
+        return ResponseObject(False, msg)
+    return ResponseObject(True, data=DashboardPushNotifications.GetSettings())
+
+@app.post(f'{APP_PREFIX}/api/push/sendTest')
+def API_Push_SendTest():
+    result = DashboardPushNotifications.SendToAll(
+        "WGDashboard",
+        "Тестовое уведомление. Если вы его видите — всё настроено верно.",
+        url="./clients", tag="wgd-test"
+    )
+    if result.get('error'):
+        return ResponseObject(False, result['error'])
+    return ResponseObject(True, f"Sent to {result['sent']} device(s)")
+
+@app.post(f'{APP_PREFIX}/api/push/checkOverdue')
+def API_Push_CheckOverdue():
+    """Ручная проверка просроченных клиентов (в дополнение к фоновой)."""
+    result = DashboardPushNotifications.SendPaymentReminders()
+    if result.get('error'):
+        return ResponseObject(False, result['error'])
+    return ResponseObject(True, f"Checked. Sent to {result['sent']} device(s)")
 
 @app.get(f'{APP_PREFIX}/api/webHooks/getWebHooks')
 def API_WebHooks_GetWebHooks():

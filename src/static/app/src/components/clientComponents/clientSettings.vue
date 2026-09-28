@@ -2,6 +2,7 @@
 import { ref, reactive } from "vue"
 import LocaleText from "@/components/text/localeText.vue";
 import OidcSettings from "@/components/clientComponents/clientSettingComponents/oidcSettings.vue";
+import PushNotificationSettings from "@/components/clientComponents/pushNotificationSettings.vue";
 import { fetchGet, fetchPost } from "@/utilities/fetch.js"
 const emits = defineEmits(['close'])
 import { DashboardConfigurationStore } from "@/stores/DashboardConfigurationStore"
@@ -76,6 +77,15 @@ const updateSettings = async (key: string) => {
 				<small class="text-muted mb-0">
 					<LocaleText t="Allow clients to access with OpenID"></LocaleText>
 				</small>
+			</div>
+
+			<hr>
+			<div>
+				<h6 class="mb-2">
+					<i class="bi bi-bell me-2"></i>
+					<LocaleText t="Payment Reminders"></LocaleText>
+				</h6>
+				<PushNotificationSettings></PushNotificationSettings>
 			</div>
 
 		</div>
