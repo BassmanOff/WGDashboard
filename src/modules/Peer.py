@@ -68,7 +68,14 @@ class Peer:
                    ) -> tuple[bool, str | None]:
 
         if not self.configuration.getStatus():
-            self.configuration.toggleConfiguration()
+            # Не игнорируем результат: если awg-quick up не удался, команда
+            # "awg set" ниже тоже упадёт и пользователь увидит безликое
+            # "Internal server error" вместо реальной причины
+            startStatus, startMsg = self.configuration.toggleConfiguration()
+            if not startStatus:
+                current_app.logger.error(
+                    f"{self.configuration.Name} could not be started while adding peer: {startMsg}")
+                return False, f"Could not start interface: {startMsg}"
 
         # Before we do any compute, let us check if the given endpoint allowed ip is valid at all
         if not CheckAddress(endpoint_allowed_ip):

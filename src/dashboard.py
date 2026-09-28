@@ -988,7 +988,12 @@ def API_addPeers(configName):
             
             config = WireguardConfigurations.get(configName)
             if not config.getStatus():
-                config.toggleConfiguration()
+                # Раньше результат игнорировался, и при неудачном awg-quick up
+                # пользователь получал "Internal server error" из updatePeer
+                startStatus, startMsg = config.toggleConfiguration()
+                if not startStatus:
+                    app.logger.error(f"Could not start interface {configName}: {startMsg}")
+                    return ResponseObject(False, f"Could not start interface: {startMsg}")
             ipStatus, availableIps = config.getAvailableIP(-1)
             ipCountStatus, numberOfAvailableIPs = config.getNumberOfAvailableIP()
             defaultIPSubnet = list(availableIps.keys())[0]
