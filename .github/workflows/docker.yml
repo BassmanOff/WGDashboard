@@ -1,19 +1,22 @@
 name: Docker Build and Push
 
+# Отключено автоматически: workflow пушит образ в docker.io/donaldzou,
+# права на этот репозиторий у форка нет, сборка падала бы на каждом push.
+# Запуск вручную: Actions -> Docker Build and Push -> Run workflow
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - 'main'
-      - 'development'
-      - '**dev'
-    tags:
-      - '*'
-    paths:
-      - 'src/**'
-      - 'docker/**'
-  release:
-    types: [ published ]
+  # push:
+  #   branches:
+  #     - 'main'
+  #     - 'development'
+  #     - '**dev'
+  #   tags:
+  #     - '*'
+  #   paths:
+  #     - 'src/**'
+  #     - 'docker/**'
+  # release:
+  #   types: [ published ]
 
 env:
   DOCKERHUB_PREFIX: docker.io

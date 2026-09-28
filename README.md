@@ -1,87 +1,164 @@
-> [!WARNING]
-> All users running WGDashboard v4.2.x or later and hosted on the public internet are strongly advised to update to the latest release immediately. For more information: [v4.3.2 Release](https://github.com/WGDashboard/WGDashboard/releases/tag/v4.3.2)
+<div align="center">
 
-> [!TIP]
-> 🎉 To help us better understand and improve WGDashboard’s performance, we’re launching the **WGDashboard Testing Program**. As part of this program, participants will receive free WireGuard VPN access to our server in Toronto, Canada, valid for **24 hours** or up to **1GB of total traffic**—whichever comes first. If you’d like to join, visit [https://wg.wgdashboard.dev/](https://wg.wgdashboard.dev/) for more details!
+# WGDashboard — панель управления WireGuard / AmneziaWG
 
+**Форк с полной поддержкой AmneziaWG 3.1**
 
-![](https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Posters/Banner.png)
+[![License](https://img.shields.io/badge/License-Apache_2.0-D22128?style=for-the-badge&logo=apache&logoColor=white)](LICENSE)
 
+</div>
 
-<p align="center">
-  <img alt="WGDashboard" src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Logos/Logo-2-Rounded-512x512.png" width="128">
-</p>
-<h1 align="center">
-  <a href="https://wgdashboard.dev">WGDashboard</a>
-</h1>
-<p align="center">
-    <img src="https://img.shields.io/badge/Made_With-Python-blue?style=for-the-badge&logo=python&logoColor=ffffff">
-    <img src="https://img.shields.io/badge/Made_With-Vue.js-42b883?style=for-the-badge&logo=vuedotjs&logoColor=ffffff">
-    <img src="https://img.shields.io/badge/License-Apache_License_2.0-D22128?style=for-the-badge&logo=apache&logoColor=ffffff">
-</p>
+Панель управления WireGuard и AmneziaWG с веб-интерфейсом: конфигурации, пиры, мониторинг трафика, резервные копии, планировщик задач и портал самообслуживания для пользователей.
 
-<p align="center">
-  <a href="https://github.com/WGDashboard/WGDashboard/releases/latest"><img src="https://img.shields.io/github/v/release/donaldzou/wireguard-dashboard?style=for-the-badge"></a>
-  <a href="https://wakatime.com/badge/github/donaldzou/WGDashboard"><img src="https://wakatime.com/badge/user/45f53c7c-9da9-4cb0-85d6-17bd38cc748b/project/5334ae20-e9a6-4c55-9fea-52d4eb9dfba6.svg?style=for-the-badge" alt="wakatime"></a>
-  <a href="https://hitscounter.dev"><img src="https://hitscounter.dev/api/hit?url=https%3A%2F%2Fgithub.com%2Fdonaldzou%2FWGDashboard&label=Visitor&icon=github&color=%230a58ca&style=for-the-badge"></a>
-  <img src="https://img.shields.io/docker/pulls/donaldzou/wgdashboard?logo=docker&label=Docker%20Image%20Pulls&labelColor=ffffff&style=for-the-badge">
-  <img src="https://github.com/WGDashboard/WGDashboard/actions/workflows/docker.yml/badge.svg?style=for-the-badge">
-  <img src="https://github.com/WGDashboard/WGDashboard/actions/workflows/codeql-analyze.yaml/badge.svg">
-</p>
-<p align="center"><b>This project is supported by</b></p>
-<p align="center">
-  <a href="https://m.do.co/c/a84cb9aac585">
-    <img src="https://opensource.nyc3.cdn.digitaloceanspaces.com/attribution/assets/SVG/DO_Logo_horizontal_blue.svg" width="201px">
-  </a>
-</p>
-<p align="center">Monitoring WireGuard is not convenient, in most case, you'll need to login to your server and type <code>wg show</code>. That's why this project is being created, to view and manage all WireGuard configurations in an easy way.</p>
-<p align="center">Though all these awesome features are present, we are still striving to make it <b>easy to install and use</b></p>
+Это форк [WGDashboard](https://github.com/WGDashboard/WGDashboard) от [Donald Zou](https://github.com/donaldzou), дополненный поддержкой всех параметров AmneziaWG 3.1, раздельным туннелированием и встроенным трекером оплат.
 
-<p align="center"><b><i>This project is not affiliated to the official WireGuard Project</i></b></p>
+---
 
-<h3 align="center">Looking for help or want to chat about this project?</h4>
-<p align="center">
-  You can reach out at
-</p>
-<p align="center">
-  <a align="center" href="https://discord.gg/72TwzjeuWm" target="_blank"><img src="https://img.shields.io/discord/1276818723637956628?labelColor=ffffff&style=for-the-badge&logo=discord&label=Discord"></a>
-  <a align="center" href="https://www.reddit.com/r/WGDashboard/" target="_blank"><img src="https://img.shields.io/badge/Reddit-r%2FWGDashboard-FF4500?style=for-the-badge&logo=reddit"></a>
-  <a align="center" href="https://app.element.io/#/room/#wgd:matrix.org" target="_blank"><img src="https://img.shields.io/badge/Matrix_Chatroom-%23WGD-000000?style=for-the-badge&logo=matrix"></a>
-</p>
-<h3 align="center">Want to support this project?</h4>
-<p align="center">
-  You can support via <br>
-</p>
-<p align="center">
-  <a align="center" href="https://github.com/sponsors/WGDashboard" target="_blank"><img src="https://img.shields.io/badge/GitHub%20Sponsor-2e9a40?style=for-the-badge&logo=github"></a>
-  <a align="center" href="https://buymeacoffee.com/donaldzou" target="_blank"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-ffdd00?style=for-the-badge&logo=buymeacoffee&logoColor=000000"></a>
-  <a align="center" href="https://patreon.com/c/DonaldDonnyZou/membership" target="_blank"><img src="https://img.shields.io/badge/Patreon-000000?style=for-the-badge&logo=patreon&logoColor=ffffff"></a>
-</p>
+## Что добавлено в этом форке
 
-<p align="center">
-  <b>or, visit our merch store and support us by purchasing a merch for only $USD 17.00 (Including shipping worldwide & duties)</b>
-</p>
-<p align="center">
-  <a align="center" href="https://merch.wgdashboard.dev" target="_blank"><img src="https://img.shields.io/badge/Merch%20from%20WGDashboard-926183?style=for-the-badge"></a>
-</p>
+### Поддержка AmneziaWG 3.1 — главное изменение
 
-<hr>
-<h4 align="center">
-  for more information, visit our
-</h4>
-<h1 align="center">
-  <a href="https://wgdashboard.dev">Official Website</a>
-</h1>
+Добавлены все девять параметров, появившихся в AmneziaWG 3.1, с валидацией, подсказками и пометкой «AWG 3.1» в интерфейсе:
 
+| Параметр | Назначение |
+|---|---|
+| `HeaderProtectionKey` | 32-байтный ключ для Header Protection (ChaCha20) — скрывает незашифрованные служебные поля пакетов |
+| `ContentPaddingAddition` | Случайное дополнение транспортных данных, мешающее статистическому анализу |
+| `RekeyAfterTime` | Интервал до повторного рукопожатия, диапазон значений |
+| `RekeyTimeout` | Таймаут ожидания ответа на рукопожатие |
+| `RejectAfterTime` | Интервал тишины, после которого сессия считается мёртвой |
+| `KeepaliveTimeout` | Интервал до отправки keepalive |
+| `MaxHandshakeAttempts` | Максимум попыток рукопожатия |
+| `RandomTrailers` | Случайные байты в конце пакетов — размывает последовательности размеров |
+| `DisableCookies` | Отключение Cookie Reply — убирает fingerprint при активном зондировании |
 
-# Screenshots
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/sign-in.png" alt=""/>
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/cross-server.png" alt=""/>
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/index.png" alt=""/>
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/new-configuration.png" alt="" />
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/settings.png" alt="" />
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/light-dark.png" alt="" />
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/configuration.png" alt=""/>
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/add-peers.png" alt="" />
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/ping.png" alt=""/>
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/traceroute.png" alt=""/>
+**Кнопка «Применить максимальную защиту от DPI»** — одной кнопкой генерирует набор параметров, рекомендованный документацией AmneziaWG 3.1. Каждое нажатие даёт новые случайные значения, соблюдая обязательные инварианты:
+
+- `S1`–`S4` ≥ 12 байт (требование Header Protection)
+- `S1` = `S2` = `S3` = `S4` (требование RandomTrailers, иначе тип пакета может определяться неверно)
+- `Jmax` > `Jmin`, иначе размеры junk-пакетов не различаются
+- при включённом Header Protection `H1`–`H4` = 1/2/3/4 (эти значения отключают механизм пользовательских заголовков)
+- при выключенном — четыре непересекающихся диапазона
+- рекомендуемый MTU пира рассчитывается от фактического `S4`
+
+Каждый параметр снабжён пояснением: что он делает и на что влияет.
+
+### Раздельное туннелирование (split tunneling)
+
+- Список подсетей на каждого пира, с проверкой формата при сохранении
+- **Импорт `ip-list.json`** в формате AmneziaVPN — файл вида `ru-lite.amnezia.json` читается напрямую
+- **Выгрузка `ip-list.json`** для импорта в AmneziaVPN: Настройки → Раздельное туннелирование → «Адреса из списка без VPN»
+
+### Трекер оплат
+
+Административный учёт сроков оплаты без вмешательства пользователей:
+
+- Дата «оплачено до», Telegram-контакт и свободный комментарий на каждого клиента
+- Статусы: не задана / оплачено / скоро истекает / просрочено
+- Цветные индикаторы в списке клиентов и фильтр «только просроченные»
+- Продление на N дней одной кнопкой
+- **Трафик не отключается** — это напоминание администратору, а не механизм блокировки
+- Заметки администратора не видны клиентам через клиентский портал
+
+### Push-уведомления о просрочках
+
+- Web Push API с VAPID-подписью, Service Worker для приёма и показа
+- Уведомления приходят на телефон, даже когда панель закрыта
+- Настраиваемая частота проверки: от 5 минут до 7 суток
+- Порог предупреждения: за сколько дней до конца оплаты слать напоминание
+- Уведомление отправляется только при смене состояния, а не каждый цикл
+
+### Прочее
+
+- Ключ подписи cookie-сессий хранится в конфиге: перезапуск панели больше не разлогинивает всех
+- Скачивание конфигурации пира в `.conf` (AmneziaWG) и `.json` (AmneziaVPN)
+- Интерфейс на русском и английском
+- Параметры конфигурации и профиля пира вынесены в общий модуль без дублирования
+
+---
+
+## Требования
+
+- AmneziaWG 3.1 (для поддержки AmneziaWG-конфигураций) либо WireGuard
+- Python 3 и venv
+- Linux с systemd
+- **HTTPS** — обязателен для push-уведомлений, Push API работает только в secure context
+
+Собрано: Flask 3.1, SQLAlchemy 2.0, Vue 3, Bootstrap 5.
+
+---
+
+## Установка
+
+```bash
+# Зависимости
+sudo apt-get update && sudo apt-get install -y sudo git net-tools
+
+# AmneziaWG 3.1
+# https://amnezia.org — раздел «Установка AmneziaWG kernel module»
+# Проверка: awg --version && which awg awg-quick
+
+# Панель
+git clone https://github.com/BassmanOff/WGDashboard.git
+cd ./WGDashboard/src
+chmod +x ./wgd.sh
+./wgd.sh install
+sudo chmod -R 755 /etc/amnezia/amneziawg
+
+# Форвардинг пакетов
+grep -q net.ipv4.ip_forward /etc/sysctl.conf || \
+  echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+sysctl -p /etc/sysctl.conf
+```
+
+### Важно про `wgd.sh`
+
+Скрипт установки ничего не знает про AmneziaWG и проверяет только `wg` / `wg-quick`. Если обычный WireGuard не установлен, скрипт поставит его как побочный эффект. Чтобы этого не произошло, задайте в `wg-dashboard.ini`:
+
+```ini
+wg_conf_path = /nonexistent
+```
+
+Тогда панель будет работать только с AmneziaWG.
+
+**Не запускайте `./wgd.sh update`.** В скрипте жёстко прописан `git pull` с официального репозитория (`wgd.sh:498`), который перезапишет ваши изменения оригинальной версией. Обновляйтесь вручную:
+
+```bash
+git pull origin main
+```
+
+### HTTPS для уведомлений
+
+Панель сама не поддерживает TLS — `ssl-tls.ini` создаётся скриптом, но никем не читается. Нужен обратный прокси. Самый простой вариант — Caddy, три строки конфига и автоматическое получение сертификата:
+
+```
+vpn.example.com {
+    reverse_proxy 127.0.0.1:10086
+}
+```
+
+Flask не доверяет заголовкам прокси по умолчанию, поэтому для корректного `aud` в VAPID-токене требуется `ProxyFix` в `dashboard.py`.
+
+---
+
+## Создание конфигурации AmneziaWG
+
+1. Протокол — **AmneziaWG**
+2. Имя — до 15 символов, латиница, цифры, `_ = + . -`
+3. Публичный ключ генерируется автоматически
+4. Listen Port — свободный UDP-порт, например `51820`
+5. IP-адрес/CIDR — например `10.8.1.1/24`
+6. Optional Settings → включить Header Protection → **«Применить максимальную защиту от DPI»**
+7. После создания включите тумблер конфигурации — панель не поднимает интерфейс автоматически
+
+При создании пира задайте **MTU = 1400** (или `1420 − S4`), иначе из-за роста пакетов на `S4` байт начнётся фрагментация UDP, которая сама по себе является сигнатурой.
+
+---
+
+## Оригинальный проект
+
+- Автор: [Donald Zou](https://github.com/donaldzou)
+- Оригинал: [WGDashboard/WGDashboard](https://github.com/WGDashboard/WGDashboard)
+- Лицензия: Apache License 2.0 — см. [LICENSE](LICENSE)
+
+Документация протокола AmneziaWG: [amnezia.org/documentation/amnezia-wg](https://m-a1f6b96e7243-3w5hsuiikq-ez.a.run.app/ru/documentation/amnezia-wg)

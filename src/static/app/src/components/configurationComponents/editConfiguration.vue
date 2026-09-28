@@ -12,10 +12,17 @@ import DeleteConfiguration from "@/components/configurationComponents/deleteConf
 import ConfigurationBackupRestore from "@/components/configurationComponents/configurationBackupRestore.vue";
 import EditPeerSettingsOverride
 	from "@/components/configurationComponents/editConfigurationComponents/editPeerSettingsOverride.vue";
+import {
+	AMNEZIA_PARAM_INFO as AMNEZIA_PARAM_INFO_MAP,
+	generateDPIHardenedValues,
+	recommendedMTUFor,
+	generateRandomKey
+} from "@/utilities/amneziaParams.js";
 const props = defineProps({
 	configurationInfo: Object
 })
 const wgStore = WireguardConfigurationsStore()
+const AMNEZIA_PARAM_INFO = AMNEZIA_PARAM_INFO_MAP
 const store = DashboardConfigurationStore()
 const saving = ref(false)
 const data = reactive(JSON.parse(JSON.stringify(props.configurationInfo)))
@@ -35,10 +42,34 @@ const genKey = () => {
 	}
 }
 const generateHeaderProtectionKey = () => {
-	// Generate 32 random bytes and convert to hex (64 characters)
-	const array = new Uint8Array(32);
-	crypto.getRandomValues(array);
-	data.HeaderProtectionKey = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+	data.HeaderProtectionKey = generateRandomKey();
+}
+const headerProtectionEnabled = ref(true)
+const profileGenerated = ref(false)
+const recommendedMTU = ref(1400)
+
+// Диапазоны H1-H4 не должны пересекаться (AmneziaWG 3.1)
+const generateHeaderValues = () => {
+	const values = generateDPIHardenedValues(false);
+	['H1', 'H2', 'H3', 'H4'].forEach(k => data[k] = values[k]);
+}
+
+const applyDPIHardenedProfile = () => {
+	// Генератор берёт новые случайные значения при каждом вызове,
+	// сохраняя инварианты (см. utilities/amneziaParams.js)
+	const values = generateDPIHardenedValues(headerProtectionEnabled.value);
+	Object.assign(data, values);
+	if (headerProtectionEnabled.value){
+		data.HeaderProtectionKey = generateRandomKey();
+	}
+	recommendedMTU.value = recommendedMTUFor(values);
+	profileGenerated.value = true;
+	dataChanged.value = true;
+	store.newMessage(
+		"WGDashboard",
+		`DPI-hardened profile applied. Recommended peer MTU: ${recommendedMTU.value}`,
+		"success"
+	)
 }
 const resetForm = () => {
 	dataChanged.value = false;
@@ -232,6 +263,38 @@ const deleteConfigurationModal = ref(false)
 											<div id="editOptionalAccordionCollapse"
 											     class="accordion-collapse collapse" data-bs-parent="#editConfigurationOptionalAccordion">
 												<div class="accordion-body d-flex flex-column gap-3">
+													<!-- Пресет максимальной защиты от DPI -->
+													<div v-if="configurationInfo.Protocol === 'awg'"
+													     class="p-3 rounded-3 border border-primary">
+														<div class="d-flex align-items-center gap-2 mb-2">
+															<i class="bi bi-shield-lock-fill text-primary"></i>
+															<strong class="small">
+																<LocaleText t="DPI hardened profile"></LocaleText>
+															</strong>
+															<span class="badge rounded-pill text-bg-primary ms-auto">AWG 3.1</span>
+														</div>
+														<small class="text-muted d-block mb-2">
+															<LocaleText t="Fills in the parameters recommended by the AmneziaWG 3.1 documentation for maximum protection against DPI detection. You can adjust any value afterwards."></LocaleText>
+														</small>
+														<div class="form-check form-switch mb-2">
+															<input class="form-check-input" type="checkbox" role="switch"
+															       id="editHeaderProtectionEnabled"
+															       v-model="headerProtectionEnabled">
+															<label class="form-check-label" for="editHeaderProtectionEnabled">
+																<LocaleText t="Enable Header Protection (sets H1-H4 to 1/2/3/4)"></LocaleText>
+															</label>
+														</div>
+														<button class="btn btn-primary btn-sm rounded-3"
+														        type="button"
+														        :disabled="saving"
+														        @click="applyDPIHardenedProfile()">
+															<i class="bi bi-magic me-1"></i>
+															<LocaleText t="Apply maximum DPI protection"></LocaleText>
+														</button>
+														<div class="form-text mt-1" v-if="profileGenerated">
+															<LocaleText :t="'Set peer MTU to ' + recommendedMTU + ' to avoid fragmentation.'"></LocaleText>
+														</div>
+													</div>
 													<div v-for="key in ['Table', 'PreUp', 'PreDown', 'PostUp', 'PostDown']">
 														<label :for="'configuration_' + key" class="form-label">
 															<small class="text-muted">
@@ -255,6 +318,9 @@ const deleteConfigurationModal = ref(false)
 														       :disabled="saving"
 														       v-model="data[key]"
 														       :id="'configuration_' + key">
+														<div class="form-text" v-if="AMNEZIA_PARAM_INFO[key]">
+															<LocaleText :t="AMNEZIA_PARAM_INFO[key].text"></LocaleText>
+														</div>
 													</div>
 													
 													<!-- AmneziaWG 3.1 new parameters -->
@@ -278,25 +344,29 @@ const deleteConfigurationModal = ref(false)
 													
 													<div v-for="key in ['ContentPaddingAddition', 'RekeyAfterTime', 'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout', 'MaxHandshakeAttempts']"
 													     v-if="configurationInfo.Protocol === 'awg'">
-														<label :for="'configuration_' + key" class="form-label">
+														<label :for="'configuration_' + key" class="form-label d-flex align-items-center gap-2">
 															<small class="text-muted">
 																<LocaleText :t="key"></LocaleText>
 															</small>
+															<span class="badge rounded-pill text-bg-info">AWG 3.1</span>
 														</label>
 														<input type="text" class="form-control form-control-sm rounded-3 font-monospace"
 														       :disabled="saving"
 														       v-model="data[key]"
 														       :id="'configuration_' + key"
 														       placeholder="e.g., 10-100 or 50">
-														<div class="form-text">uint16 range (0-65535)</div>
+														<div class="form-text" v-if="AMNEZIA_PARAM_INFO[key]">
+															<LocaleText :t="AMNEZIA_PARAM_INFO[key].text"></LocaleText>
+														</div>
 													</div>
-													
+												
 													<div v-for="key in ['RandomTrailers', 'DisableCookies']"
 													     v-if="configurationInfo.Protocol === 'awg'">
-														<label :for="'configuration_' + key" class="form-label">
+														<label :for="'configuration_' + key" class="form-label d-flex align-items-center gap-2">
 															<small class="text-muted">
 																<LocaleText :t="key"></LocaleText>
 															</small>
+															<span class="badge rounded-pill text-bg-info">AWG 3.1</span>
 														</label>
 														<select class="form-select form-select-sm rounded-3"
 														        :disabled="saving"

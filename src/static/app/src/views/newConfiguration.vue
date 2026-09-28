@@ -9,6 +9,12 @@ import {ref} from "vue";
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
 import {exp} from "qrcode/lib/core/galois-field.js";
 import NewConfigurationTemplates from "@/components/newConfigurationComponents/newConfigurationTemplates.vue";
+import {
+	AMNEZIA_PARAM_INFO,
+	generateDPIHardenedValues,
+	recommendedMTUFor,
+	generateRandomKey
+} from "@/utilities/amneziaParams.js";
 
 export default {
 	name: "newConfiguration",
@@ -21,7 +27,7 @@ export default {
 		})
 		const dashboardStore = DashboardConfigurationStore();
 		
-		return {store, protocols, dashboardStore}
+		return {store, protocols, dashboardStore, AMNEZIA_PARAM_INFO}
 	},
 	data(){
 		return {
@@ -71,6 +77,9 @@ export default {
 			errorMessage: "",
 			success: false,
 			loading: false,
+			profileGenerated: false,
+			recommendedMTU: 1400,
+			headerProtectionEnabled: true,
 			parseInterfaceResult: undefined,
 			parsePeersResult: undefined
 		}
@@ -99,21 +108,34 @@ export default {
 			this.newConfiguration.PresharedKey = wg.presharedKey;
 		},
 		generateHeaderValues(){
-			// 4 непересекающихся диапазона с разрывами между ними
-			const RANGE_SIZE = 1000;
-			let cursor = 10;
-			['H1', 'H2', 'H3', 'H4'].forEach((key) => {
-				const start = cursor + this.rand(1, RANGE_SIZE);
-				const end = start + this.rand(10, RANGE_SIZE);
-				this.newConfiguration[key] = `${start}-${end}`;
-				cursor = end;
-			});
+			// 4 непересекающихся диапазона (Header Protection выключен)
+			const values = generateDPIHardenedValues(false);
+			['H1', 'H2', 'H3', 'H4'].forEach(k => this.newConfiguration[k] = values[k]);
 		},
 		generateHeaderProtectionKey(){
-			// Generate 32 random bytes and convert to hex (64 characters)
-			const array = new Uint8Array(32);
-			crypto.getRandomValues(array);
-			this.newConfiguration.HeaderProtectionKey = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+			this.newConfiguration.HeaderProtectionKey = generateRandomKey();
+		},
+		generateDPIHardenedProfile(){
+			// Каждый вызов даёт новые случайные значения. Инварианты,
+			// которые соблюдает генератор (см. utilities/amneziaParams.js):
+			//  - S1-S4 >= 12 байт, иначе не работает Header Protection
+			//  - S1-S4 одинаковые, иначе при RandomTrailers тип пакета
+			//    может определяться неверно
+			//  - при Header Protection H1-H4 = 1/2/3/4
+			//  - при выключенном - диапазоны не пересекаются
+			const values = generateDPIHardenedValues(this.headerProtectionEnabled);
+			Object.assign(this.newConfiguration, values);
+			if (this.headerProtectionEnabled){
+				this.newConfiguration.HeaderProtectionKey = generateRandomKey();
+			}
+
+			this.recommendedMTU = recommendedMTUFor(values);
+			this.profileGenerated = true;
+			this.dashboardStore.newMessage(
+				"WGDashboard",
+				`DPI-hardened profile applied. Recommended peer MTU: ${this.recommendedMTU}`,
+				"success"
+			);
 		},
 		async saveNewConfiguration(){
 			if (this.goodToSubmit){
@@ -406,6 +428,41 @@ export default {
 						<div id="newConfigurationOptionalAccordionCollapse" 
 						     class="accordion-collapse collapse" data-bs-parent="#newConfigurationOptionalAccordion">
 							<div class="accordion-body d-flex flex-column gap-3">
+								<!-- Пресет максимальной защиты от DPI -->
+								<div class="card rounded-3 border-primary" v-if="this.newConfiguration.Protocol === 'awg'">
+									<div class="card-header d-flex align-items-center gap-2">
+										<i class="bi bi-shield-lock-fill text-primary"></i>
+										<LocaleText t="DPI hardened profile"></LocaleText>
+										<span class="badge rounded-pill text-bg-primary ms-auto">AWG 3.1</span>
+									</div>
+									<div class="card-body d-flex flex-column gap-2">
+										<small class="text-muted">
+											<LocaleText t="Fills in the parameters recommended by the AmneziaWG 3.1 documentation for maximum protection against DPI detection. You can adjust any value afterwards."></LocaleText>
+										</small>
+										<div class="form-check form-switch">
+											<input class="form-check-input" type="checkbox" role="switch"
+											       id="headerProtectionEnabled"
+											       v-model="this.headerProtectionEnabled">
+											<label class="form-check-label" for="headerProtectionEnabled">
+												<LocaleText t="Enable Header Protection (sets H1-H4 to 1/2/3/4)"></LocaleText>
+											</label>
+										</div>
+										<button class="btn btn-primary btn-sm rounded-3 align-self-start"
+										        type="button"
+										        :disabled="this.loading"
+										        @click="this.generateDPIHardenedProfile()">
+											<i class="bi bi-magic me-1"></i>
+											<LocaleText t="Apply maximum DPI protection"></LocaleText>
+										</button>
+										<div class="alert alert-success rounded-3 py-2 px-3 mb-0" v-if="this.profileGenerated">
+											<small>
+												<LocaleText t="Profile applied."></LocaleText>
+												<LocaleText :t="'Set peer MTU to ' + this.recommendedMTU + ' to avoid fragmentation.'"></LocaleText>
+											</small>
+										</div>
+									</div>
+								</div>
+
 								<div class="card rounded-3" v-for="key in ['Table', 'PreUp', 'PreDown', 'PostUp', 'PostDown']">
 									<div class="card-header">{{ key }}</div>
 									<div class="card-body">
@@ -422,6 +479,9 @@ export default {
 									<div class="card-body">
 										<input type="text"
 										       class="form-control font-monospace" :id="key" v-model="this.newConfiguration[key]">
+										<div class="form-text" v-if="AMNEZIA_PARAM_INFO[key]">
+											<LocaleText :t="AMNEZIA_PARAM_INFO[key].text"></LocaleText>
+										</div>
 									</div>
 								</div>
 
@@ -430,10 +490,14 @@ export default {
 									<div class="card-header d-flex align-items-center">
 										H1, H2, H3, H4
 										<button class="btn btn-sm btn-outline-primary ms-auto"
-										        type="button" @click="this.generateHeaderValues()">
+										        type="button" @click="this.generateHeaderValues()"
+										        v-if="!this.headerProtectionEnabled">
 											<i class="bi bi-arrow-repeat me-1"></i>
 											<LocaleText t="Regenerate"></LocaleText>
 										</button>
+									</div>
+									<div class="form-text mb-2">
+										<LocaleText t="Message type identifiers for the four packet formats. Ranges must not overlap. Values 1/2/3/4 disable the corresponding mechanism, which is required when using Header Protection."></LocaleText>
 									</div>
 									<div class="card-body d-flex flex-column gap-2">
 										<input type="text"
@@ -457,7 +521,10 @@ export default {
 								<!-- AmneziaWG 3.1 new parameters -->
 								<div class="card rounded-3" 
 								     v-if="this.newConfiguration.Protocol === 'awg'">
-									<div class="card-header">HeaderProtectionKey</div>
+									<div class="card-header d-flex align-items-center">
+										HeaderProtectionKey
+										<span class="badge rounded-pill text-bg-info ms-auto">AWG 3.1</span>
+									</div>
 									<div class="card-body">
 										<div class="input-group">
 											<input type="text"
@@ -471,25 +538,36 @@ export default {
 											</button>
 										</div>
 										<div class="form-text">32-byte key for Header Protection (ChaCha20)</div>
+										<div class="form-text" v-if="AMNEZIA_PARAM_INFO['HeaderProtectionKey']">
+											<LocaleText :t="AMNEZIA_PARAM_INFO['HeaderProtectionKey'].text"></LocaleText>
+										</div>
 									</div>
 								</div>
 								
 								<div class="card rounded-3" 
 								     v-if="this.newConfiguration.Protocol === 'awg'"
 								     v-for="key in ['ContentPaddingAddition', 'RekeyAfterTime', 'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout', 'MaxHandshakeAttempts']">
-									<div class="card-header">{{ key }}</div>
+									<div class="card-header d-flex align-items-center">
+										{{ key }}
+										<span class="badge rounded-pill text-bg-info ms-auto">AWG 3.1</span>
+									</div>
 									<div class="card-body">
 										<input type="text"
 										       class="form-control font-monospace" :id="key" v-model="this.newConfiguration[key]"
 										       placeholder="e.g., 10-100 or 50">
-										<div class="form-text">uint16 range (0-65535)</div>
+										<div class="form-text" v-if="AMNEZIA_PARAM_INFO[key]">
+											<LocaleText :t="AMNEZIA_PARAM_INFO[key].text"></LocaleText>
+										</div>
 									</div>
 								</div>
 								
 								<div class="card rounded-3" 
 								     v-if="this.newConfiguration.Protocol === 'awg'"
 								     v-for="key in ['RandomTrailers', 'DisableCookies']">
-									<div class="card-header">{{ key }}</div>
+									<div class="card-header d-flex align-items-center">
+										{{ key }}
+										<span class="badge rounded-pill text-bg-info ms-auto">AWG 3.1</span>
+									</div>
 									<div class="card-body">
 										<select class="form-select" :id="key" v-model="this.newConfiguration[key]">
 											<option value="off">off</option>
