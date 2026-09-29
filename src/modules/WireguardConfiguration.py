@@ -390,7 +390,7 @@ class WireguardConfiguration:
         return changed
 
     def getPeers(self):
-        tmpList = []        
+        tmpList = []
         if self.configurationFileChanged():
             with open(self.configPath, 'r') as configFile:
                 p = []
@@ -450,6 +450,7 @@ class WireguardConfiguration:
                                     "mtu": self.DashboardConfig.GetConfig("Peers", "peer_mtu")[1] if len(self.DashboardConfig.GetConfig("Peers", "peer_mtu")[1]) > 0 else None,
                                     "keepalive": self.DashboardConfig.GetConfig("Peers", "peer_keep_alive")[1] if len(self.DashboardConfig.GetConfig("Peers", "peer_keep_alive")[1]) > 0 else None,
                                     "notes": "",
+                                    "telegram": "",
                                     "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
                                     "preshared_key": i["PresharedKey"] if "PresharedKey" in i.keys() else ""
                                 }

@@ -117,80 +117,28 @@ class AmneziaConfiguration(WireguardConfiguration):
         }
 
     def createDatabase(self, dbName = None):
-        def generate_column_obj():
-            return [
-                sqlalchemy.Column('id', sqlalchemy.String(255), nullable=False, primary_key=True),
-                sqlalchemy.Column('private_key', sqlalchemy.String(255)),
-                sqlalchemy.Column('DNS', sqlalchemy.Text),
-                sqlalchemy.Column('endpoint_allowed_ip', sqlalchemy.Text),
-                sqlalchemy.Column('name', sqlalchemy.Text),
-                sqlalchemy.Column('total_receive', sqlalchemy.Float),
-                sqlalchemy.Column('total_sent', sqlalchemy.Float),
-                sqlalchemy.Column('total_data', sqlalchemy.Float),
-                sqlalchemy.Column('endpoint', sqlalchemy.String(255)),
-                sqlalchemy.Column('status', sqlalchemy.String(255)),
-                sqlalchemy.Column('latest_handshake', sqlalchemy.String(255)),
-                sqlalchemy.Column('allowed_ip', sqlalchemy.String(255)),
-                sqlalchemy.Column('cumu_receive', sqlalchemy.Float),
-                sqlalchemy.Column('cumu_sent', sqlalchemy.Float),
-                sqlalchemy.Column('cumu_data', sqlalchemy.Float),
-                sqlalchemy.Column('mtu', sqlalchemy.Integer),
-                sqlalchemy.Column('keepalive', sqlalchemy.Integer),
-                sqlalchemy.Column('notes', sqlalchemy.Text),
-                sqlalchemy.Column('remote_endpoint', sqlalchemy.String(255)),
-                sqlalchemy.Column('preshared_key', sqlalchemy.String(255))
-            ]
+        """
+        Схема таблиц для AmneziaWG полностью совпадает с базовым классом -
+        протокол влияет только на содержимое .conf, но не на структуру БД.
 
-        if dbName is None:
-            dbName = self.Name
-
-        self.peersTable = sqlalchemy.Table(
-            f'{dbName}', self.metadata, *generate_column_obj(), extend_existing=True
-        )
-
-        self.peersRestrictedTable = sqlalchemy.Table(
-            f'{dbName}_restrict_access', self.metadata, *generate_column_obj(), extend_existing=True
-        )
-
-        self.peersDeletedTable = sqlalchemy.Table(
-            f'{dbName}_deleted', self.metadata, *generate_column_obj(), extend_existing=True
-        )
-
-        if self.DashboardConfig.GetConfig("Database", "type")[1] == 'sqlite':
-            time_col_type = sqlalchemy.DATETIME
-        else:
-            time_col_type = sqlalchemy.TIMESTAMP
-
-        self.peersTransferTable = sqlalchemy.Table(
-            f'{dbName}_transfer', self.metadata,
-            sqlalchemy.Column('id', sqlalchemy.String(255), nullable=False),
-            sqlalchemy.Column('total_receive', sqlalchemy.Float),
-            sqlalchemy.Column('total_sent', sqlalchemy.Float),
-            sqlalchemy.Column('total_data', sqlalchemy.Float),
-            sqlalchemy.Column('cumu_receive', sqlalchemy.Float),
-            sqlalchemy.Column('cumu_sent', sqlalchemy.Float),
-            sqlalchemy.Column('cumu_data', sqlalchemy.Float),
-            sqlalchemy.Column('time', time_col_type, server_default=sqlalchemy.func.now()),
-            extend_existing=True
-        )
-        
-        self.peersHistoryEndpointTable = sqlalchemy.Table(
-            f'{dbName}_history_endpoint', self.metadata,
-            sqlalchemy.Column('id', sqlalchemy.String(255), nullable=False),
-            sqlalchemy.Column('endpoint', sqlalchemy.String(255), nullable=False),
-            sqlalchemy.Column('time', time_col_type)
-        )
-        
-        self.infoTable = sqlalchemy.Table(
-            'ConfigurationsInfo', self.metadata,
-            sqlalchemy.Column('ID', sqlalchemy.String(255), primary_key=True),
-            sqlalchemy.Column('Info', sqlalchemy.Text),
-            extend_existing=True
-        )
-
-        self.metadata.create_all(self.engine)
+        Раньше здесь была отдельная копия списка колонок, которая разошлась
+        с базовой: колонки split_tunnel_* и telegram появились только в
+        базовой, а SQLAlchemy строил insert по списку из этого метода и
+        падал с 'Unconsumed column names'. Ранье это давало 'Internal
+        server error' вместо понятного сообщения.
+        """
+        return super().createDatabase(dbName)
 
     def getPeers(self):
+        """
+        Разбор .conf идентичен базовому классу: протокол не меняет формат
+        секций [Peer]. Отличие одно - создаётся AmneziaPeer, у которого
+        updatePeer умеет работать с параметрами AmneziaWG.
+
+        Раньше здесь была вторая копия этого метода, которая со временем
+        разошлась с базовой (свой список колонок, своя обработка ошибок),
+        поэтому изменения в базовом классе до awg не доходили.
+        """
         self.Peers.clear()
         if self.configurationFileChanged():
             with open(self.configPath, 'r') as configFile:
@@ -246,6 +194,7 @@ class AmneziaConfiguration(WireguardConfiguration):
                                         "mtu": self.DashboardConfig.GetConfig("Peers", "peer_mtu")[1],
                                         "keepalive": self.DashboardConfig.GetConfig("Peers", "peer_keep_alive")[1],
                                         "notes": "",
+                                        "telegram": "",
                                         "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
                                         "preshared_key": i["PresharedKey"] if "PresharedKey" in i.keys() else "",
                                         "split_tunnel_ips": "",
