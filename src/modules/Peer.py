@@ -38,11 +38,15 @@ class Peer:
         self.notes = tableData.get("notes", "")
         self.remote_endpoint = tableData["remote_endpoint"]
         self.preshared_key = tableData["preshared_key"]
-        # Split tunneling fields
-        self.split_tunnel_ips = tableData.get("split_tunnel_ips", "")
-        self.split_tunnel_mode = tableData.get("split_tunnel_mode", "include")
+        # Split tunneling fields.
+        # Колонки добавляются миграцией ALTER TABLE без DEFAULT, поэтому в
+        # существующих строках там NULL, а не отсутствующий ключ: get() с
+        # дефолтом отдаёт None и проверка режима отклоняет пира. Поэтому
+        # None приводится к значению по умолчанию явно.
+        self.split_tunnel_ips = tableData.get("split_tunnel_ips") or ""
+        self.split_tunnel_mode = tableData.get("split_tunnel_mode") or "include"
         # Контакт администратора, виден в списке пиров и его настройках
-        self.telegram = tableData.get("telegram", "")
+        self.telegram = tableData.get("telegram") or ""
         self.jobs: list[PeerJob] = []
         self.ShareLink: list[PeerShareLink] = []
         self.getJobs()

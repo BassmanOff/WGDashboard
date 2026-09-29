@@ -40,8 +40,12 @@ export default {
 				PresharedKey: "",
 				PreUp: "",
 				PreDown: "",
-				PostUp: "",
-				PostDown: "",
+				// NAT и форвардинг нужны, чтобы трафик пиров уходил в
+				// интернет. Без PostUp панель поднимает интерфейс, handshake
+				// проходит, но пакеты дальше сервера не идут. Подставляется
+				// автоматически, чтобы рабочая конфигурация получалась сразу.
+				PostUp: "iptables -t nat -A POSTROUTING -s <subnet> -o <iface> -j MASQUERADE; iptables -A FORWARD -i <iface> -o <iface> -j ACCEPT; iptables -A FORWARD -i <iface> -o <iface> -m state --state RELATED,ESTABLISHED -j ACCEPT",
+				PostDown: "iptables -t nat -D POSTROUTING -s <subnet> -o <iface> -j MASQUERADE; iptables -D FORWARD -i <iface> -o <iface> -j ACCEPT; iptables -D FORWARD -i <iface> -o <iface> -m state --state RELATED,ESTABLISHED -j ACCEPT",
 				Table: "",
 				Protocol: "wg",
 				// AmneziaWG 2.0+ parameters
@@ -137,9 +141,34 @@ export default {
 				"success"
 			);
 		},
+		/**
+		 * Подставляет реальные значения подсети и внешнего интерфейса
+		 * в шаблон PostUp/PostDown. Без этого в конфиг попадают
+		 * буквальные <subnet> и <iface>, и awg-quick не поднимает интерфейс.
+		 */
+		applyNatDefaults(){
+			const subnet = (this.newConfiguration.Address || '').split(',')[0].trim();
+			// Маска подсети: 10.8.1.1/24 -> 10.8.1.0/24
+			let network = subnet;
+			if (subnet.includes('/')){
+				const [addr, bits] = subnet.split('/');
+				const parts = addr.split('.').map(p => parseInt(p, 10) || 0);
+				const shift = 32 - parseInt(bits, 10);
+				parts[3] = (parts[3] >> shift) << shift;
+				network = `${parts.join('.')}/${bits}`;
+			}
+			if (!network) return;
+			this.newConfiguration.PostUp = this.newConfiguration.PostUp
+				.replaceAll('<subnet>', network)
+				.replaceAll('<iface>', 'eth0');
+			this.newConfiguration.PostDown = this.newConfiguration.PostDown
+				.replaceAll('<subnet>', network)
+				.replaceAll('<iface>', 'eth0');
+		},
 		async saveNewConfiguration(){
 			if (this.goodToSubmit){
 				this.loading = true;
+				this.applyNatDefaults();
 				await fetchPost("/api/addWireguardConfiguration", this.newConfiguration, async (res) => {
 					if (res.status){
 						this.success = true
