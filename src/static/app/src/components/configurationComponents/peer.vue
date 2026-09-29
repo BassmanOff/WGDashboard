@@ -14,6 +14,15 @@ export default {
 	methods: {
 		GetLocale,
 		/**
+		 * Подстановка числа в переводимую строку вида "Overdue by {n} day(s)".
+		 *
+		 * Именно метод, а не computed: computed вызывается Vue без
+		 * аргументов, поэтому параметры до него не доходят.
+		 */
+		localizeCount(template, n){
+			return GetLocale(template).replace('{n}', n)
+		},
+		/**
 		 * Продление срока прямо из карточки пира.
 		 *
 		 * Отдельный запрос, а не сохранение настроек: срок оплаты не
@@ -90,9 +99,6 @@ export default {
 			if (days === null || days === undefined) return GetLocale('No payment date set')
 			if (days < 0) return this.localizeCount('Overdue by {n} day(s)', Math.abs(days))
 			return this.localizeCount('{n} day(s) left', days)
-		},
-		localizeCount(template, n){
-			return GetLocale(template).replace('{n}', n)
 		},
 		// Подсветка всей карточки. Цвет границы задаётся здесь, фон - в CSS
 		// переменных, потому что у Bootstrap 5.3 нет готового цвета фона

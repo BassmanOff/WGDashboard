@@ -30,6 +30,11 @@ export default {
 				this.dataChanged = false;
 			}
 		},
+		// Метод, а не computed: Vue вызывает computed-геттер без
+		// аргументов, и параметры до localizeCount не доходят
+		localizeCount(template, n){
+			return GetLocale(template).replace('{n}', n);
+		},
 		// Продление идёт отдельным запросом: срок оплаты не относится к
 		// VPN, поэтому обновление даты не должно дёргать awg и рвать
 		// соединение клиента
@@ -124,9 +129,6 @@ export default {
 		}
 	},
 	computed: {
-		localizeCount(){
-			return (template, n) => GetLocale(template).replace('{n}', n);
-		},
 		paymentBadge(){
 			switch (this.data?.PaymentStatus){
 				case 'active':

@@ -1,5 +1,11 @@
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
 export const GetLocale = (key) => {
+	// Функция перевода не должна ронять страницу: она вызывается прямо в
+	// шаблонах, и исключение здесь прерывает рендер целиком (список
+	// пиров пропадал из-за одного нестрокового аргумента)
+	if (typeof key !== 'string'){
+		return key
+	}
 	const store = DashboardConfigurationStore()
 	if (store.Locale === null)
 		return key
