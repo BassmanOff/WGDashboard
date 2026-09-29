@@ -95,21 +95,30 @@ class Peer:
         # нужен. Иначе продление оплаты рвало бы туннель и вызывало лишний
         # handshake. Поле name попадает в .conf как комментарий, но само по
         # себе awg не меняет, поэтому тоже не считается.
-        vpnChanged = (private_key != self.private_key
-                      or preshared_key != self.preshared_key
-                      or dns_addresses != self.DNS
-                      or allowed_ip != self.allowed_ip
-                      or endpoint_allowed_ip != self.endpoint_allowed_ip
-                      or str(mtu) != str(self.mtu)
-                      or str(keepalive) != str(self.keepalive)
-                      or split_tunnel_ips != self.split_tunnel_ips
-                      or split_tunnel_mode != self.split_tunnel_mode)
+        #
+        # Разделение на серверную и клиентскую части. В awg уходят только
+        # AllowedIPs и PresharedKey (см. __runAwgUpdate). private_key, DNS,
+        # endpoint_allowed_ip, MTU, keepalive и раздельное туннелирование
+        # существуют только в конфиге, который получает клиент. Раньше они
+        # тоже считались поводом вызвать awg, из-за чего обычная правка MTU
+        # или Allowed IPs рвала туннель лишней командой "awg-quick save".
+        serverChanged = (allowed_ip != self.allowed_ip
+                         or preshared_key != self.preshared_key)
 
-        if vpnChanged:
+        clientChanged = (private_key != self.private_key
+                         or dns_addresses != self.DNS
+                         or endpoint_allowed_ip != self.endpoint_allowed_ip
+                         or str(mtu) != str(self.mtu)
+                         or str(keepalive) != str(self.keepalive)
+                         or split_tunnel_ips != self.split_tunnel_ips
+                         or split_tunnel_mode != self.split_tunnel_mode)
+
+        if serverChanged or clientChanged:
             status, startMsg = self.__runAwgUpdate(
                 private_key, preshared_key, dns_addresses, allowed_ip,
                 endpoint_allowed_ip, mtu, keepalive,
-                split_tunnel_ips, split_tunnel_mode)
+                split_tunnel_ips, split_tunnel_mode,
+                applyToServer=serverChanged)
             if not status:
                 return False, startMsg
 
@@ -120,7 +129,7 @@ class Peer:
             "paid_until": parsedPaidUntil,
             "payment_comment": payment_comment
         }
-        if vpnChanged:
+        if serverChanged or clientChanged:
             values.update({
                 "private_key": private_key,
                 "DNS": dns_addresses,
@@ -167,8 +176,19 @@ class Peer:
 
     def __runAwgUpdate(self, private_key, preshared_key, dns_addresses,
                        allowed_ip, endpoint_allowed_ip, mtu, keepalive,
-                       split_tunnel_ips, split_tunnel_mode) -> tuple[bool, str | None]:
-        """Валидация и применение изменений, требующих вмешательства awg."""
+                       split_tunnel_ips, split_tunnel_mode,
+                       applyToServer: bool = True) -> tuple[bool, str | None]:
+        """
+        Валидация изменений и, при applyToServer, их применение через awg.
+
+        Валидация выполняется всегда: она не зависит от того, меняем ли мы
+        серверную часть. А команда awg выполняется только при
+        applyToServer, потому что она меняет ровно две вещи - AllowedIPs
+        и PresharedKey пира. Всё остальное (private_key, DNS,
+        endpoint_allowed_ip, MTU, keepalive, раздельное туннелирование)
+        существует только в конфиге, который получает клиент, и на сервере
+        awg делать нечего.
+        """
         if not self.configuration.getStatus():
             # Не игнорируем результат: если awg-quick up не удался, команда
             # "awg set" ниже тоже упадёт и пользователь увидит безликое
@@ -225,6 +245,10 @@ class Peer:
             pubKey = GenerateWireguardPublicKey(private_key)
             if not pubKey[0] or pubKey[1] != self.id:
                 return False, "Private key does not match with the public key"
+
+        if not applyToServer:
+            # Проверки выше уже прошли, менять на сервере нечего
+            return True, None
 
         try:
             rand = random.Random()
