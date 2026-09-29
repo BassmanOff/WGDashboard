@@ -106,7 +106,14 @@ class DashboardPeerPayments:
         if peer is None:
             return False, err
         if Days is not None:
-            return peer.ExtendPayment(Days)
+            status, msg = peer.ExtendPayment(Days)
+            if not status:
+                return False, msg
+            # ExtendPayment возвращает только флаг, а вызывающему нужен
+            # актуальный пир: карточка обновляет по нему дату, статус и
+            # остаток дней
+            _, refreshed = self.wireguardConfigurations[configName].searchPeer(peerID)
+            return True, refreshed.toJson()
         if PaidUntil is not None:
             # updatePeer сам разберёт дату и запишет её; остальные поля
             # передаются текущие, поэтому VPN-параметры не меняются

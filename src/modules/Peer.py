@@ -141,7 +141,13 @@ class Peer:
         return True, None
 
     def ExtendPayment(self, Days: int) -> tuple[bool, str | None]:
-        """Продлевает срок оплаты на Days дней, не трогая туннель."""
+        """
+        Продлевает срок оплаты на Days дней, не трогая туннель.
+
+        Возвращает только флаг и сообщение: актуальное состояние вызывающий
+        код читает через searchPeer после refresh, потому что getPeers()
+        пересобирает весь список.
+        """
         if not isinstance(Days, int) or Days < 1 or Days > 3650:
             return False, "Days must be an integer between 1 and 3650"
         base = self.paid_until
