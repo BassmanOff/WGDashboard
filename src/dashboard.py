@@ -788,6 +788,7 @@ def API_updatePeerSettings(configName):
         notes = data.get('notes', '')
         split_tunnel_ips = data.get('split_tunnel_ips', '')
         split_tunnel_mode = data.get('split_tunnel_mode', 'include')
+        telegram = data.get('telegram', '')
         wireguardConfig = WireguardConfigurations[configName]
         foundPeer, peer = wireguardConfig.searchPeer(id)
         if foundPeer:
@@ -802,7 +803,8 @@ def API_updatePeerSettings(configName):
                                               keepalive,
                                               notes,
                                               split_tunnel_ips,
-                                              split_tunnel_mode)
+                                              split_tunnel_mode,
+                                              telegram)
             else:
                 status, msg = peer.updatePeer(name,
                                               private_key,
@@ -814,7 +816,8 @@ def API_updatePeerSettings(configName):
                                               keepalive,
                                               notes,
                                               split_tunnel_ips,
-                                              split_tunnel_mode)
+                                              split_tunnel_mode,
+                                              telegram)
             wireguardConfig.getPeers()
             DashboardWebHooks.RunWebHook('peer_updated', {
                 "configuration": wireguardConfig.Name,

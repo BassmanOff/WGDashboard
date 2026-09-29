@@ -142,6 +142,17 @@ export default {
 								       id="peer_name_textbox" placeholder="">
 							</div>
 							<div>
+								<label for="peer_telegram_textbox" class="form-label">
+									<small class="text-muted">
+										<LocaleText t="Telegram"></LocaleText>
+									</small>
+								</label>
+								<input type="text" class="form-control form-control-sm rounded-3"
+								       :disabled="this.saving"
+								       v-model="this.data.telegram"
+								       id="peer_telegram_textbox" placeholder="@username">
+							</div>
+							<div>
 								<label for="peer_notes_textbox" class="form-label">
 									<small class="text-muted">
 										<LocaleText t="Notes"></LocaleText>

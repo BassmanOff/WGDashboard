@@ -22,14 +22,36 @@ def GetRemoteEndpoint() -> str:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("1.1.1.1", 80))  # Connecting to a public IP
         wgd_remote_endpoint = s.getsockname()[0]
-        return str(wgd_remote_endpoint)
+        if _isRoutableAddress(wgd_remote_endpoint):
+            return str(wgd_remote_endpoint)
     except (socket.error, OSError):
         pass
     try:
-        return socket.gethostbyname(socket.gethostname())
+        resolved = socket.gethostbyname(socket.gethostname())
+        if _isRoutableAddress(resolved):
+            return resolved
     except (socket.error, OSError):
         pass
-    return "127.0.0.1"
+    # Пустая строка вместо loopback: значение попадает в конфиг клиента,
+    # и молча подставить 127.0.0.1 означает выдать нерабочий конфиг.
+    # Пустое значение видно в интерфейсе и его можно исправить вручную.
+    return ""
+
+
+def _isRoutableAddress(address: str) -> bool:
+    """
+    Годится ли адрес для remote_endpoint.
+
+    Отбрасываем loopback и link-local: они возникают, когда панель стартует
+    при уже поднятом VPN-интерфейсе, и запрос уходит в туннель. Такой адрес
+    в конфиге клиента нерабочий, а отличить его от правильного вручную
+    трудно - 127.0.0.1 рядом с 127.0.1.1.
+    """
+    try:
+        ip = ipaddress.ip_address(str(address).strip())
+    except ValueError:
+        return False
+    return not (ip.is_loopback or ip.is_link_local or ip.is_unspecified)
 
 
 def StringToBoolean(value: str):

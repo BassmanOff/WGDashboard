@@ -274,7 +274,11 @@ class WireguardConfiguration:
                 sqlalchemy.Column('preshared_key', sqlalchemy.String(255)),
                 # Split tunneling fields
                 sqlalchemy.Column('split_tunnel_ips', sqlalchemy.Text),
-                sqlalchemy.Column('split_tunnel_mode', sqlalchemy.String(10))
+                sqlalchemy.Column('split_tunnel_mode', sqlalchemy.String(10)),
+                # Контакт администратора для пира. Отдельная от notes
+                # колонка, потому что по нему ищут клиента, а notes -
+                # свободный текст произвольного содержания
+                sqlalchemy.Column('telegram', sqlalchemy.String(255))
             ]
 
         if dbName is None:
@@ -548,6 +552,7 @@ class WireguardConfiguration:
                         "mtu": i['mtu'],
                         "keepalive": i['keepalive'],
                         "notes": i.get("notes", ""),
+                        "telegram": i.get("telegram", ""),
                         "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
                         "preshared_key": i["preshared_key"]
                     }

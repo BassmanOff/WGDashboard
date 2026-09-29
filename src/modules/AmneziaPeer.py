@@ -24,7 +24,8 @@ class AmneziaPeer(Peer):
                    keepalive: int,
                    notes: str,
                    split_tunnel_ips: str = "",
-                   split_tunnel_mode: str = "include"
+                   split_tunnel_mode: str = "include",
+                   telegram: str = ""
                    ) -> tuple[bool, str | None]:
 
         if not self.configuration.getStatus():
@@ -126,7 +127,8 @@ class AmneziaPeer(Peer):
                         "notes": notes,
                         "preshared_key": preshared_key,
                         "split_tunnel_ips": split_tunnel_ips,
-                        "split_tunnel_mode": split_tunnel_mode
+                        "split_tunnel_mode": split_tunnel_mode,
+                        "telegram": telegram.strip()
                     }).where(
                         self.configuration.peersTable.c.id == self.id
                     )

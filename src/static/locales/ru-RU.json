@@ -247,6 +247,7 @@
 	"No overdue payments": "Просроченных нет",
 	"No payment date set": "Дата не указана",
 	"Not supported by browser": "Браузер не поддерживает",
+	"Notes": "Заметки",
 	"Notifications disabled": "Уведомления выключены",
 	"Notifications enabled": "Уведомления включены",
 	"Number of junk packets sent before the handshake. Helps hide the handshake initiation from DPI.": "Количество мусорных пакетов перед рукопожатием. Помогает скрыть начало рукопожатия от DPI.",

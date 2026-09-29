@@ -41,6 +41,8 @@ class Peer:
         # Split tunneling fields
         self.split_tunnel_ips = tableData.get("split_tunnel_ips", "")
         self.split_tunnel_mode = tableData.get("split_tunnel_mode", "include")
+        # Контакт администратора, виден в списке пиров и его настройках
+        self.telegram = tableData.get("telegram", "")
         self.jobs: list[PeerJob] = []
         self.ShareLink: list[PeerShareLink] = []
         self.getJobs()
@@ -64,7 +66,8 @@ class Peer:
                    keepalive: int,
                    notes: str,
                    split_tunnel_ips: str = "",
-                   split_tunnel_mode: str = "include"
+                   split_tunnel_mode: str = "include",
+                   telegram: str = ""
                    ) -> tuple[bool, str | None]:
 
         if not self.configuration.getStatus():
@@ -165,7 +168,8 @@ class Peer:
                         "notes": notes,
                         "preshared_key": preshared_key,
                         "split_tunnel_ips": split_tunnel_ips,
-                        "split_tunnel_mode": split_tunnel_mode
+                        "split_tunnel_mode": split_tunnel_mode,
+                        "telegram": telegram.strip()
                     }).where(
                         self.configuration.peersTable.c.id == self.id
                     )

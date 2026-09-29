@@ -144,7 +144,8 @@ class DashboardConfig:
             'remote_endpoint': db.String(255),
             'preshared_key': db.String(255),
             'split_tunnel_ips': db.Text,
-            'split_tunnel_mode': db.String(10)
+            'split_tunnel_mode': db.String(10),
+            'telegram': db.String(255)
         }
 
         inspector = db.inspect(self.engine)
@@ -260,6 +261,18 @@ class DashboardConfig:
         if section == "Server" and key == "wg_conf_path":
             if not os.path.exists(value):
                 return False, f"{value} is not a valid path"
+        if section == "Peers" and key == "remote_endpoint":
+            # Этот адрес попадает в конфиг клиента (QR, .conf), поэтому
+            # loopback делает конфигурацию нерабочей - такой адрес не
+            # должен сохраняться
+            try:
+                endpoint = ipaddress.ip_address(str(value).strip())
+            except ValueError:
+                return False, "Remote endpoint must be a valid IP address"
+            if endpoint.is_loopback or endpoint.is_unspecified:
+                return False, ("Remote endpoint cannot be a loopback address "
+                               "(127.0.0.0/8). Clients would not be able to "
+                               "connect - set the server's public address")
         if section == "Account" and key == "password":
             if self.GetConfig("Account", "password")[0]:
                 if not self.__checkPassword(

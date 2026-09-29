@@ -83,6 +83,15 @@ export default {
 			<h6>
 				{{Peer.name ? Peer.name : GetLocale('Untitled Peer')}}
 			</h6>
+			<div class="mb-1" v-if="Peer.telegram">
+				<a :href="'https://t.me/' + Peer.telegram.replace(/^@/, '')"
+				   target="_blank"
+				   rel="noopener noreferrer"
+				   class="small text-decoration-none"
+				   @click.stop>
+					<i class="bi bi-telegram me-1"></i>{{Peer.telegram}}
+				</a>
+			</div>
 			<div class="d-flex"
 			     :class="[dashboardStore.Configuration.Server.dashboard_peer_list_display === 'grid' ? 'gap-1 flex-column' : 'flex-row gap-3']">
 				<div :class="{'d-flex gap-2 align-items-center' : dashboardStore.Configuration.Server.dashboard_peer_list_display === 'list'}">
