@@ -105,7 +105,10 @@ class DashboardClients:
                 for col_name, col_type in expected.items():
                     if col_name in existing:
                         continue
-                    type_str = col_type().compile(dialect=self.engine.dialect)
+                    # db.DATETIME / db.TIMESTAMP передаются как готовые объекты
+                    # типа, а не как классы: вызов такого значения дал бы TypeError
+                    col = col_type() if isinstance(col_type, type) else col_type
+                    type_str = col.compile(dialect=self.engine.dialect)
                     conn.execute(db.text(
                         f"ALTER TABLE {preparer.quote_identifier('DashboardClientsInfo')} "
                         f"ADD COLUMN {preparer.quote_identifier(col_name)} {type_str}"

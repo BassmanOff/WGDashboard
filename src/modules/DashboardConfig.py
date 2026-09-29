@@ -167,7 +167,11 @@ class DashboardConfig:
 
                     for col_name, col_type in expected_columns.items():
                         if col_name not in existing_columns:
-                            type_str = col_type().compile(dialect=self.engine.dialect)
+                            # col_type может быть как классом (db.Text), так и
+                            # уже созданным экземпляром типа (db.String(10)) -
+                            # во втором случае вызов был бы TypeError
+                            col = col_type() if isinstance(col_type, type) else col_type
+                            type_str = col.compile(dialect=self.engine.dialect)
                             current_app.logger.info(f"Adding missing column '{col_name}' to table '{table_name}'")
                             preparer = self.engine.dialect.identifier_preparer
                             quoted_table = preparer.quote_identifier(table_name)

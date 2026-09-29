@@ -1,12 +1,12 @@
 """
 AmneziaWG Configuration (v3.1+)
 """
-import random, sqlalchemy, os, subprocess, re, uuid
+import sqlalchemy, re
 from flask import current_app
 from .PeerJobs import PeerJobs
 from .AmneziaPeer import AmneziaPeer
 from .PeerShareLinks import PeerShareLinks
-from .Utilities import RegexMatch, CheckAddress, CheckPeerKey
+from .Utilities import RegexMatch
 from .WireguardConfiguration import WireguardConfiguration
 from .DashboardWebHooks import DashboardWebHooks
 
@@ -272,79 +272,17 @@ class AmneziaConfiguration(WireguardConfiguration):
                     self.Peers.append(AmneziaPeer(i, self))
 
     def addPeers(self, peers: list) -> tuple[bool, list, str]:
-        result = {
-            "message": None,
-            "peers": []
-        }
-        try:
-            cleanedAllowedIPs = {}
-            for p in peers:
-                newAllowedIPs = p['allowed_ip'].replace(" ", "")
-                if not CheckAddress(newAllowedIPs):
-                    return False, [], "Allowed IPs entry format is incorrect"
-                if not CheckPeerKey(p["id"]):
-                    return False, [], "Peer key format is incorrect"
-                cleanedAllowedIPs[p["id"]] = newAllowedIPs
+        """
+        Создание пиров для AmneziaWG.
 
-            with self.engine.begin() as conn:
-                for i in peers:
-                    newPeer = {
-                        "id": i['id'],
-                        "private_key": i['private_key'],
-                        "DNS": i['DNS'],
-                        "endpoint_allowed_ip": i['endpoint_allowed_ip'],
-                        "name": i['name'],
-                        "total_receive": 0,
-                        "total_sent": 0,
-                        "total_data": 0,
-                        "endpoint": "N/A",
-                        "status": "stopped",
-                        "latest_handshake": "N/A",
-                        "allowed_ip": i.get("allowed_ip", "N/A"),
-                        "cumu_receive": 0,
-                        "cumu_sent": 0,
-                        "cumu_data": 0,
-                        "mtu": i['mtu'],
-                        "keepalive": i['keepalive'],
-                        "notes": i.get('notes', ''),
-                        "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
-                        "preshared_key": i["preshared_key"],
-                        "split_tunnel_ips": i.get('split_tunnel_ips', ''),
-                        "split_tunnel_mode": i.get('split_tunnel_mode', 'include')
-                    }
-                    conn.execute(
-                        self.peersTable.insert().values(newPeer)
-                    )
-            for p in peers:
-                presharedKeyExist = len(p['preshared_key']) > 0
-                rd = random.Random()
-                uid = str(uuid.UUID(int=rd.getrandbits(128), version=4))
-                if presharedKeyExist:
-                    with open(uid, "w+") as f:
-                        f.write(p['preshared_key'])
-
-                command = [self.Protocol, "set", self.Name, "peer", p['id'], "allowed-ips", cleanedAllowedIPs[p["id"]], "preshared-key", uid if presharedKeyExist else "/dev/null"]
-                subprocess.check_output(command, stderr=subprocess.STDOUT)
-
-                if presharedKeyExist:
-                    os.remove(uid)
-
-            command = [f"{self.Protocol}-quick", "save", self.Name]
-            subprocess.check_output(command, stderr=subprocess.STDOUT)
-
-            self.getPeers()
-            for p in peers:
-                p = self.searchPeer(p['id'])
-                if p[0]:
-                    result['peers'].append(p[1])
-            self.DashboardWebHooks.RunWebHook("peer_created", {
-                "configuration": self.Name,
-                "peers": list(map(lambda k : k['id'], peers))
-            })
-        except Exception as e:
-            current_app.logger.error("Add peers error", e)
-            return False, [], "Internal server error"
-        return True, result['peers'], ""
+        Реализация намеренно НЕ дублирует WireguardConfiguration.addPeers:
+        уникальной для awg тут только вызов self.Protocol в командах, а
+        self.Protocol уже равен 'awg' у базового класса. Раньше здесь была
+        отдельная копия метода, из-за чего исправления в базовом классе
+        (передача реальной ошибки вместо 'Internal server error', откат
+        записей БД при сбое) до awg не доходили.
+        """
+        return super().addPeers(peers)
 
     def getRestrictedPeers(self):
         self.RestrictedPeers = []
