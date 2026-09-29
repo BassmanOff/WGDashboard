@@ -11,14 +11,16 @@ Peer (для выдачи в API), сводка по всем конфигура
 Статусы:
   unset    - срок не задан
   active   - оплачено, до истечения больше порога
-  expiring - срок заканчивается (по умолчанию <= 7 дней)
+  expiring - срок заканчивается (по умолчанию <= 5 дней)
   expired  - просрочено
 """
 import datetime
 from typing import Any
 
-# Срок считается истёкшим в конце указанного дня
-EXPIRING_WITHIN_DAYS = 7
+# Число дней до конца срока, начиная с которых оплата считается
+# заканчивающейся. Этот порог управляет и подсветкой карточки пира, и
+# счётчиками в сводке, поэтому он задаётся в одном месте.
+EXPIRING_WITHIN_DAYS = 5
 
 
 def NormalizePaidUntil(value: Any) -> datetime.datetime | None:
@@ -54,10 +56,14 @@ def ComputePaymentStatus(paidUntil: Any) -> tuple[str, int | None, str | None]:
     if parsed is None:
         return "unset", None, None
     today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # Срок считается истёкшим в конце указанного дня: полночь, к которой
+    # прибавлен срок, ещё относится к оплаченному дню.
     days = (parsed.date() - today.date()).days
     if days < 0:
         status = "expired"
     elif days <= EXPIRING_WITHIN_DAYS:
+        # Граница включительная: осталось ровно 5 дней - уже "истекает",
+        # и карточка пира красится в жёлтый
         status = "expiring"
     else:
         status = "active"

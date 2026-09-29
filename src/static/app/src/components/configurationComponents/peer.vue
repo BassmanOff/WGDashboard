@@ -6,16 +6,51 @@ import PeerSettingsDropdown from "@/components/configurationComponents/peerSetti
 import LocaleText from "@/components/text/localeText.vue";
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
 import {GetLocale} from "@/utilities/locale.js";
+import {fetchPost} from "@/utilities/fetch.js";
 import PeerTagBadge from "@/components/configurationComponents/peerTagBadge.vue";
 
 export default {
 	name: "peer",
-	methods: {GetLocale},
+	methods: {
+		GetLocale,
+		/**
+		 * Продление срока прямо из карточки пира.
+		 *
+		 * Отдельный запрос, а не сохранение настроек: срок оплаты не
+		 * относится к VPN, поэтому обновление не должно дёргать awg и
+		 * рвать соединение клиента. Ответом обновляем отдельные поля, а
+		 * не подменяем объект Peer - он является источником данных для
+		 * родительского списка, и подмена ломала бы реактивность.
+		 */
+		extendPayment(){
+			if (!this.extendDays) return;
+			fetchPost("/api/payments/extend", {
+				Configuration: this.$route.params.id,
+				Peer: this.Peer.id,
+				Days: this.extendDays
+			}, (res) => {
+				if (res.status){
+					this.Peer.PaidUntilFormatted = res.data.PaidUntilFormatted;
+					this.Peer.DaysRemaining = res.data.DaysRemaining;
+					this.Peer.PaymentStatus = res.data.PaymentStatus;
+					this.Peer.paid_until = res.data.paid_until;
+					this.$emit("refresh");
+				}else{
+					this.dashboardStore.newMessage("WGDashboard", res.message, "danger");
+				}
+			})
+		}
+	},
 	components: {
 		PeerTagBadge, LocaleText, PeerSettingsDropdown
 	},
 	props: {
 		Peer: Object, ConfigurationInfo: Object, order: Number, searchPeersLength: Number
+	},
+	data(){
+		return {
+			extendDays: 30
+		}
 	},
 	setup(){
 		const target = ref(null);
@@ -58,6 +93,28 @@ export default {
 		},
 		localizeCount(template, n){
 			return GetLocale(template).replace('{n}', n)
+		},
+		// Подсветка всей карточки. Цвет границы задаётся здесь, фон - в CSS
+		// переменных, потому что у Bootstrap 5.3 нет готового цвета фона
+		// для warning/danger, есть только варианты text-bg-*
+		cardPaymentClass(){
+			switch (this.Peer.PaymentStatus){
+				case 'expired':
+					return 'peer-card-overdue'
+				case 'expiring':
+					return 'peer-card-expiring'
+				default:
+					return ''
+			}
+		},
+		// Дата в формате 15.10.2026: ISO-строку из БД не нужно
+		// преобразовывать через Date, иначе время сдвигается по часовому
+		// поясу браузера и дата может "уехать" на день назад
+		paymentDate(){
+			const value = this.Peer.PaidUntilFormatted
+			if (!value || value.length < 10) return ''
+			const [y, m, d] = value.slice(0, 10).split('-')
+			return `${d}.${m}.${y}`
 		}
 	}
 }
@@ -66,7 +123,7 @@ export default {
 <template>
 	<div class="card shadow-sm rounded-3 peerCard"
 		 :id="'peer_'+Peer.id"
-		:class="{'border-warning': Peer.restricted}">
+		:class="[{'border-warning': Peer.restricted}, cardPaymentClass]">
 		<div>
 			<div v-if="!Peer.restricted" class="card-header bg-transparent d-flex align-items-center gap-2 border-0">
 				<div class="dot ms-0" :class="{active: Peer.status === 'running'}"></div>
@@ -112,6 +169,11 @@ export default {
 					<i class="bi me-1" :class="paymentBadge.icon"></i>
 					{{paymentBadge.text}}
 				</span>
+				<span class="small text-muted"
+					  v-if="paymentDate"
+					  :title="GetLocale('Paid Until')">
+					<i class="bi bi-calendar-event me-1"></i>{{paymentDate}}
+				</span>
 				<a v-if="Peer.telegram"
 				   :href="'https://t.me/' + Peer.telegram.replace(/^@/, '')"
 				   target="_blank"
@@ -120,6 +182,25 @@ export default {
 				   @click.stop>
 					<i class="bi bi-telegram me-1"></i>{{Peer.telegram}}
 				</a>
+				<!--
+					Продление прямо из карточки. Кнопка нужна, потому что
+					истекающий пир иначе требует открывать настройки, а срок
+					чаще всего продлевают именно в тот день, когда увидели
+					жёлтую карточку.
+				-->
+				<span class="ms-auto d-flex align-items-center gap-1"
+					  v-if="Peer.PaymentStatus === 'expiring' || Peer.PaymentStatus === 'expired'">
+					<input type="number" min="1" max="3650"
+						   class="form-control form-control-sm paymentExtendInput"
+						   v-model.number="extendDays"
+						   :title="GetLocale('Days')">
+					<button class="btn btn-sm btn-success"
+					        :disabled="!extendDays"
+					        @click.stop="extendPayment()"
+					        :title="GetLocale('Extend payment by N days')">
+						<i class="bi bi-plus-lg"></i>
+					</button>
+				</span>
 			</div>
 			<div class="d-flex"
 			     :class="[dashboardStore.Configuration.Server.dashboard_peer_list_display === 'grid' ? 'gap-1 flex-column' : 'flex-row gap-3']">
@@ -200,5 +281,46 @@ export default {
 
 .peerCard:hover{
 	box-shadow: var(--bs-box-shadow) !important;
+}
+
+/*
+  Подсветка по состоянию оплаты.
+
+  Цвета фона заданы через rgb от --bs-warning / --bs-danger с небольшой
+  прозрачностью: Bootstrap не даёт готового фона для warning/danger
+  (есть только text-bg-* для текста), а заливка через --bs-warning-subtle
+  в тёмной теме слишком тёмная и статус перестаёт читаться.
+
+  Оттенок в rgb зашит намеренно: подстановка CSS-переменной внутрь
+  rgb() без color-mix() не поддерживается, а color-mix не везде есть.
+  Значения соответствуют Bootstrap 5.3 (warning #ffc107, danger #dc3545).
+*/
+.peer-card-expiring{
+	border-color: var(--bs-warning) !important;
+	border-width: 2px !important;
+	background-color: rgba(255, 193, 7, 0.10);
+}
+
+.peer-card-overdue{
+	border-color: var(--bs-danger) !important;
+	border-width: 2px !important;
+	background-color: rgba(220, 53, 69, 0.12);
+}
+
+/*
+  Более плотный фон для тёмной темы: на тёмном фоне полупрозрачная
+  заливка поверх тёмной подложки почти не видна.
+*/
+[data-bs-theme="dark"] .peer-card-expiring{
+	background-color: rgba(255, 193, 7, 0.18);
+}
+
+[data-bs-theme="dark"] .peer-card-overdue{
+	background-color: rgba(220, 53, 69, 0.22);
+}
+
+/* Поле продления на карточке не должно раздувать её по высоте */
+.paymentExtendInput{
+	width: 4.5rem;
 }
 </style>

@@ -9,6 +9,7 @@ import sqlalchemy as db
 import requests
 
 from .DatabaseConnection import ConnectionString
+from .DashboardPeerPayments import EXPIRING_WITHIN_DAYS
 from .DashboardClientsPeerAssignment import DashboardClientsPeerAssignment
 from .DashboardClientsTOTP import DashboardClientsTOTP
 from .DashboardOIDC import DashboardOIDC
@@ -189,7 +190,9 @@ class DashboardClients:
             c['PaidUntilFormatted'] = paidUntil.strftime("%Y-%m-%d")
             if days < 0:
                 c['PaymentStatus'] = 'expired'
-            elif days <= 7:
+            elif days <= EXPIRING_WITHIN_DAYS:
+                # Порог берётся из DashboardPeerPayments, чтобы счётчики
+                # по клиентам и по пирам не расходились
                 c['PaymentStatus'] = 'expiring'
             else:
                 c['PaymentStatus'] = 'active'
