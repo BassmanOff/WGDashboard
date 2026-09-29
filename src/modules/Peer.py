@@ -260,27 +260,53 @@ class Peer:
             current_app.logger.error(f"Subprocess call failed:\n{exc.output.decode('UTF-8')}")
             return False, "Internal server error"
 
+    def __buildFileName(self) -> str:
+        """
+        Имя файла для выгрузки конфигурации пира.
+
+        Раньше разрешался только ASCII ([a-zA-Z0-9_=+.-]), поэтому любое
+        имя целиком на русском давало пустую строку, и файл сохранялся под
+        именем, которое подставлял браузер. Теперь берутся буквы и цифры
+        любого алфавита (str.isalnum() в Python 3 учитывает Unicode), плюс
+        безопасный набор знаков.
+
+        Остальные символы отбрасываются, поэтому имя нельзя превратить
+        в путь: оба разделителя уходят вместе с управляющими символами.
+        """
+        source = (self.name or "").strip()
+        if len(source) == 0:
+            source = "UntitledPeer"
+
+        # Пробелы не удаляем, а заменяем: так "Бадян Комп" не превратится
+        # в "БадянКомп" и имя останется читаемым. В некоторых системах
+        # пробелы в имени файла недопустимы.
+        source = re.sub(r"\s+", "_", source)
+
+        # Зарезервированные имена Windows: CON, PRN, AUX, NUL, COM1..9,
+        # LPT1..9. Проверяется до очистки, как и раньше.
+        if re.match(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$",
+                    source, re.IGNORECASE):
+            source = f"file_{source}"
+
+        safe = "_-+.="
+        result = "".join(
+            ch for ch in source
+            if ch.isalnum() or ch in safe
+        ).strip(". ")
+
+        if len(result) == 0:
+            # Имя состояло только из символов, которые нельзя оставить.
+            # Публичный ключ всегда состоит из безопасных символов base64,
+            # поэтому даёт уникальное и осмысленное имя.
+            result = self.id or "peer"
+        return result
+
     def downloadPeer(self) -> dict[str, str]:
         final = {
             "fileName": "",
             "file": ""
         }
-        filename = self.name
-        if len(filename) == 0:
-            filename = "UntitledPeer"
-        filename = "".join(filename.split(' '))
-
-        # use previous filtering code if code below is insufficient or faulty
-        filename = re.sub(r'[.,/?<>\\:*|"]', '', filename).rstrip(". ") # remove special characters
-
-        reserved_pattern = r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$" # match com1-9, lpt1-9, con, nul, prn, aux, nul
-
-        if re.match(reserved_pattern, filename, re.IGNORECASE):
-            filename = f"file_{filename}" # prepend "file_" if it matches
-
-        for i in filename:
-            if re.match("^[a-zA-Z0-9_=+.-]$", i):
-                final["fileName"] += i
+        final["fileName"] = self.__buildFileName()
 
         interfaceSection = {
             "PrivateKey": self.private_key,
@@ -425,9 +451,10 @@ class Peer:
                 current_app.logger.error(f"Peer {self.id} has an invalid split tunnel entry: {raw} ({e})")
                 continue
             entries.append({"hostname": raw, "ip": ""})
-        safeName = re.sub(r'[.,/?<>\\:*|"\'\s]+', '', self.name or "") or "UntitledPeer"
         return {
-            "fileName": f"{safeName}_ip-list.json",
+            # Тот же санитайзер, что и для .conf: иначе русское имя
+            # превратилось бы в "_ip-list.json"
+            "fileName": f"{self.__buildFileName()}_ip-list.json",
             "file": json.dumps(entries, ensure_ascii=False)
         }
 
