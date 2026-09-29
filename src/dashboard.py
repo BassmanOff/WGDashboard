@@ -794,10 +794,17 @@ def API_updatePeerSettings(configName):
         split_tunnel_ips = data.get('split_tunnel_ips', '')
         split_tunnel_mode = data.get('split_tunnel_mode', 'include')
         telegram = data.get('telegram', '')
-        paid_until = data.get('paid_until', None)
         payment_comment = data.get('payment_comment', '')
+        # Различаем "поле не прислали" и "прислали пустым, то есть очистили".
+        # Раньше отсутствие ключа считалось пустой датой, и любой клиент,
+        # который не знает про оплату, молча стирал срок. Смотрим на текущее
+        # значение пира, а не на заглушку None.
         wireguardConfig = WireguardConfigurations[configName]
         foundPeer, peer = wireguardConfig.searchPeer(id)
+        if 'paid_until' in data:
+            paid_until = data['paid_until']
+        else:
+            paid_until = peer.paid_until.strftime("%Y-%m-%d") if foundPeer and peer.paid_until else ""
         if foundPeer:
             # Ветвление по протоколу больше не нужно: реализация
             # updatePeer в Peer и AmneziaPeer совпадает, а вызовы awg/wg
@@ -816,12 +823,18 @@ def API_updatePeerSettings(configName):
                                           telegram,
                                           paid_until,
                                           payment_comment)
+            if not status:
+                return ResponseObject(False, msg)
             wireguardConfig.getPeers()
             DashboardWebHooks.RunWebHook('peer_updated', {
                 "configuration": wireguardConfig.Name,
                 "peers": [id]
             })
-            return ResponseObject(status, msg)
+            # Возвращаем обновлённого пира: статус оплаты и остаток дней
+            # считаются на сервере, и без ответа окно настроек продолжало бы
+            # показывать прежние значения до переоткрытия
+            _, updated = wireguardConfig.searchPeer(id)
+            return ResponseObject(True, data=updated.toJson())
             
     return ResponseObject(False, "Peer does not exist")
 

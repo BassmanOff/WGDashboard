@@ -60,14 +60,32 @@ export default {
 		},
 		savePeer(){
 			this.saving = true;
-			fetchPost(`/api/updatePeerSettings/${this.$route.params.id}`, this.data, (res) => {
+			/*
+			 * Поле даты в форме связано с PaidUntilFormatted - это строка для
+			 * показа ("2026-10-15"). Бэкенд же читает paid_until. Без этой
+			 * подстановки отправлялся бы старый paid_until из объекта пира,
+			 * и сохранение выглядело бы как "ничего не изменилось", хотя
+			 * запрос уходит и отвечает успехом.
+			 */
+			const payload = Object.assign({}, this.data, {
+				paid_until: this.data.PaidUntilFormatted || ""
+			});
+			fetchPost(`/api/updatePeerSettings/${this.$route.params.id}`, payload, (res) => {
 				this.saving = false;
 				if (res.status){
+					// Присваиваем по полям, а не подменяем data: объект
+					// взят из selectedPeer, который принадлежит родителю
+					if (res.data){
+						this.data.PaidUntilFormatted = res.data.PaidUntilFormatted;
+						this.data.DaysRemaining = res.data.DaysRemaining;
+						this.data.PaymentStatus = res.data.PaymentStatus;
+						this.data.paid_until = res.data.paid_until;
+					}
+					this.$emit("refresh")
 					this.dashboardConfigurationStore.newMessage("Server", "Peer saved", "success")
 				}else{
 					this.dashboardConfigurationStore.newMessage("Server", res.message, "danger")
 				}
-				this.$emit("refresh")
 			})
 		},
 		importSplitTunnelJSON(e){
