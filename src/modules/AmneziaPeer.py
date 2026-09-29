@@ -1,13 +1,4 @@
-import os
-from flask import current_app
-import random
-import re
-import subprocess
-import uuid
-
-from flask import current_app
 from .Peer import Peer
-from .Utilities import CheckAddress, ValidateDNSAddress, GenerateWireguardPublicKey, ValidateSplitTunnelList
 
 
 class AmneziaPeer(Peer):
@@ -25,116 +16,21 @@ class AmneziaPeer(Peer):
                    notes: str,
                    split_tunnel_ips: str = "",
                    split_tunnel_mode: str = "include",
-                   telegram: str = ""
+                   telegram: str = "",
+                   paid_until: str = None,
+                   payment_comment: str = ""
                    ) -> tuple[bool, str | None]:
+        """
+        Реализация НЕ дублирует Peer.updatePeer.
 
-        if not self.configuration.getStatus():
-            # Не игнорируем результат: если awg-quick up не удался, команда
-            # "awg set" ниже тоже упадёт и пользователь увидит безликое
-            # "Internal server error" вместо реальной причины
-            startStatus, startMsg = self.configuration.toggleConfiguration()
-            if not startStatus:
-                current_app.logger.error(
-                    f"{self.configuration.Name} could not be started while adding peer: {startMsg}")
-                return False, f"Could not start interface: {startMsg}"
-
-        # Before we do any compute, let us check if the given endpoint allowed ip is valid at all
-        if not CheckAddress(endpoint_allowed_ip):
-            return False, f"Endpoint Allowed IPs format is incorrect"
-
-        peers = []
-        for peer in self.configuration.getPeersList():
-            # Make sure to exclude your own data when updating since its not really relevant
-            if peer.id != self.id:
-                continue
-            peers.append(peer)
-
-        used_allowed_ips = []
-        for peer in peers:
-            ips = peer.allowed_ip.split(',')
-            ips = [ip.strip() for ip in ips]
-            used_allowed_ips.append(ips)
-
-        if allowed_ip in used_allowed_ips:
-            return False, "Allowed IP already taken by another peer"
-
-        if not ValidateDNSAddress(dns_addresses):
-            return False, f"DNS IP-Address or FQDN is incorrect"
-
-        splitValid, splitMsg = ValidateSplitTunnelList(split_tunnel_ips)
-        if not splitValid:
-            return False, splitMsg
-
-        if split_tunnel_mode not in ("include", "exclude"):
-            return False, "Split tunnel mode must be 'include' or 'exclude'"
-
-        if isinstance(mtu, str):
-            mtu = 0
-
-        if isinstance(keepalive, str):
-            keepalive = 0
-        
-        if mtu not in range(0, 1461):
-            return False, "MTU format is not correct"
-
-        if keepalive < 0:
-            return False, "Persistent Keepalive format is not correct"
-
-        if len(private_key) > 0:
-            pubKey = GenerateWireguardPublicKey(private_key)
-            if not pubKey[0] or pubKey[1] != self.id:
-                return False, "Private key does not match with the public key"
-    
-        try:
-            rand = random.Random()
-            uid = str(uuid.UUID(int=rand.getrandbits(128), version=4))
-            psk_exist = len(preshared_key) > 0
-
-            if psk_exist:
-                with open(uid, "w+") as f:
-                    f.write(preshared_key)
-
-            newAllowedIPs = allowed_ip.replace(" ", "")
-            if not CheckAddress(newAllowedIPs):
-                return False, "Allowed IPs entry format is incorrect"
-
-            command = [self.configuration.Protocol, "set", self.configuration.Name, "peer", self.id, "allowed-ips", newAllowedIPs, "preshared-key", uid if psk_exist else "/dev/null"]
-
-            updateAllowedIp = subprocess.check_output(command, stderr=subprocess.STDOUT)
-
-            if psk_exist: os.remove(uid)
-
-            if len(updateAllowedIp.decode().strip("\n")) != 0:
-                current_app.logger.error(f"Update peer failed when updating Allowed IPs.\nInput: {newAllowedIPs}\nOutput: {updateAllowedIp.decode().strip('\n')}")
-                return False, "Internal server error"
-
-            command = [f"{self.configuration.Protocol}-quick", "save", self.configuration.Name]
-            saveConfig = subprocess.check_output(command, stderr=subprocess.STDOUT)
-
-            if f"wg showconf {self.configuration.Name}" not in saveConfig.decode().strip('\n'):
-                current_app.logger.error("Update peer failed when saving the configuration")
-                return False, "Internal server error"
-
-            with self.configuration.engine.begin() as conn:
-                conn.execute(
-                    self.configuration.peersTable.update().values({
-                        "name": name,
-                        "private_key": private_key,
-                        "DNS": dns_addresses,
-                        "endpoint_allowed_ip": endpoint_allowed_ip,
-                        "mtu": mtu,
-                        "keepalive": keepalive,
-                        "notes": notes,
-                        "preshared_key": preshared_key,
-                        "split_tunnel_ips": split_tunnel_ips,
-                        "split_tunnel_mode": split_tunnel_mode,
-                        "telegram": telegram.strip()
-                    }).where(
-                        self.configuration.peersTable.c.id == self.id
-                    )
-                )
-            self.configuration.getPeers()
-            return True, None
-        except subprocess.CalledProcessError as exc:
-            current_app.logger.error(f"Subprocess call failed:\n{exc.output.decode('UTF-8')}")
-            return False, "Internal server error"
+        В базовом классе все команды строятся через
+        self.configuration.Protocol, который для AmneziaWG равен 'awg',
+        поэтому отдельная копия метода не давала ничего, кроме риска
+        разойтись с базовой - именно это и происходило: правки на оплату
+        и откат записей в базовом классе до awg не доходили.
+        """
+        return super().updatePeer(
+            name, private_key, preshared_key, dns_addresses, allowed_ip,
+            endpoint_allowed_ip, mtu, keepalive, notes,
+            split_tunnel_ips, split_tunnel_mode, telegram,
+            paid_until, payment_comment)

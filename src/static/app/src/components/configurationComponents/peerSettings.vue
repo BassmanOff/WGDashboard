@@ -1,6 +1,7 @@
 <script>
 import {fetchPost} from "@/utilities/fetch.js";
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
+import {GetLocale} from "@/utilities/locale.js";
 import LocaleText from "@/components/text/localeText.vue";
 
 export default {
@@ -14,7 +15,8 @@ export default {
 			data: undefined,
 			dataChanged: false,
 			showKey: false,
-			saving: false
+			saving: false,
+			extendDays: 30
 		}
 	},
 	setup(){
@@ -27,6 +29,29 @@ export default {
 				this.data = JSON.parse(JSON.stringify(this.selectedPeer))
 				this.dataChanged = false;
 			}
+		},
+		// Продление идёт отдельным запросом: срок оплаты не относится к
+		// VPN, поэтому обновление даты не должно дёргать awg и рвать
+		// соединение клиента
+		extendPayment(){
+			if (!this.data || !this.extendDays) return;
+			this.saving = true;
+			fetchPost("/api/payments/extend", {
+				Configuration: this.$route.params.id,
+				Peer: this.data.id,
+				Days: this.extendDays
+			}, (res) => {
+				this.saving = false;
+				if (res.status){
+					this.data.PaidUntilFormatted = res.data.PaidUntilFormatted;
+					this.data.DaysRemaining = res.data.DaysRemaining;
+					this.data.PaymentStatus = res.data.PaymentStatus;
+					this.dashboardConfigurationStore.newMessage("Server", "Payment extended", "success");
+					this.$emit("refresh");
+				}else{
+					this.dashboardConfigurationStore.newMessage("Server", res.message, "danger");
+				}
+			})
 		},
 		savePeer(){
 			this.saving = true;
@@ -98,6 +123,23 @@ export default {
 			})
 		}
 	},
+	computed: {
+		localizeCount(){
+			return (template, n) => GetLocale(template).replace('{n}', n);
+		},
+		paymentBadge(){
+			switch (this.data?.PaymentStatus){
+				case 'active':
+					return {icon: 'bi-check-circle-fill', text: 'Paid'}
+				case 'expiring':
+					return {icon: 'bi-exclamation-triangle-fill', text: this.localizeCount('Expiring in {n} day(s)', this.data.DaysRemaining)}
+				case 'expired':
+					return {icon: 'bi-x-octagon-fill', text: this.localizeCount('Overdue by {n} day(s)', Math.abs(this.data.DaysRemaining))}
+				default:
+					return {icon: 'bi-dash-circle', text: 'No payment date set'}
+			}
+		}
+	},
 	beforeMount() {
 		this.reset();
 	},
@@ -151,6 +193,58 @@ export default {
 								       :disabled="this.saving"
 								       v-model="this.data.telegram"
 								       id="peer_telegram_textbox" placeholder="@username">
+							</div>
+							<div class="row g-2">
+								<div class="col-6">
+									<label for="peer_paid_until" class="form-label">
+										<small class="text-muted">
+											<LocaleText t="Paid Until"></LocaleText>
+										</small>
+									</label>
+									<input type="date" class="form-control form-control-sm rounded-3"
+									       :disabled="this.saving"
+									       v-model="this.data.PaidUntilFormatted"
+									       id="peer_paid_until">
+								</div>
+								<div class="col-6">
+									<label for="peer_extend_days" class="form-label">
+										<small class="text-muted">
+											<LocaleText t="Extend by"></LocaleText>
+										</small>
+									</label>
+									<div class="input-group input-group-sm">
+										<input type="number" min="1" max="3650" class="form-control rounded-3"
+										       :disabled="this.saving"
+										       v-model.number="this.extendDays"
+										       id="peer_extend_days">
+										<button class="btn btn-outline-primary"
+										        :disabled="this.saving || !this.extendDays"
+										        @click="this.extendPayment()">
+											<LocaleText t="Extend"></LocaleText>
+										</button>
+									</div>
+								</div>
+							</div>
+							<div v-if="this.data.DaysRemaining !== null && this.data.DaysRemaining !== undefined">
+								<div class="form-text d-flex align-items-center">
+									<i class="bi me-1" :class="this.paymentBadge.icon"></i>
+									{{this.paymentBadge.text}}
+								</div>
+							</div>
+							<div>
+								<label for="peer_payment_comment" class="form-label">
+									<small class="text-muted">
+										<LocaleText t="Comment"></LocaleText>
+									</small>
+								</label>
+								<textarea class="form-control form-control-sm rounded-3" rows="2"
+								          :disabled="this.saving"
+								          v-model="this.data.payment_comment"
+								          id="peer_payment_comment"
+								          placeholder="Payment notes, method, anything for your own reference"></textarea>
+							</div>
+							<div class="form-text fst-italic">
+								<LocaleText t="Payment status is only visible to the administrator. The client is never notified and access is not restricted."></LocaleText>
 							</div>
 							<div>
 								<label for="peer_notes_textbox" class="form-label">

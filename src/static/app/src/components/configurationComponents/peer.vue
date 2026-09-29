@@ -35,6 +35,29 @@ export default {
 		},
 		getDropup(){
 			return this.searchPeersLength - this.order <= 3
+		},
+		paymentBadge(){
+			switch (this.Peer.PaymentStatus){
+				case 'active':
+					return {cls: 'text-bg-success', icon: 'bi-check-circle-fill', text: GetLocale('Paid')}
+				case 'expiring':
+					return {cls: 'text-bg-warning', icon: 'bi-exclamation-triangle-fill', text: GetLocale('Expiring soon')}
+				case 'expired':
+					return {cls: 'text-bg-danger', icon: 'bi-x-octagon-fill', text: GetLocale('Payment overdue')}
+				default:
+					return {cls: 'text-bg-secondary', icon: 'bi-dash-circle', text: GetLocale('No payment date set')}
+			}
+		},
+		// Подсказка с точным числом дней: в бейдже умещается только
+		// общий статус, поэтому конкретика уходит в title
+		paymentTitle(){
+			const days = this.Peer.DaysRemaining
+			if (days === null || days === undefined) return GetLocale('No payment date set')
+			if (days < 0) return this.localizeCount('Overdue by {n} day(s)', Math.abs(days))
+			return this.localizeCount('{n} day(s) left', days)
+		},
+		localizeCount(template, n){
+			return GetLocale(template).replace('{n}', n)
 		}
 	}
 }
@@ -83,8 +106,14 @@ export default {
 			<h6>
 				{{Peer.name ? Peer.name : GetLocale('Untitled Peer')}}
 			</h6>
-			<div class="mb-1" v-if="Peer.telegram">
-				<a :href="'https://t.me/' + Peer.telegram.replace(/^@/, '')"
+			<div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+				<span class="badge rounded-pill" :class="paymentBadge.cls" v-if="Peer.PaymentStatus && Peer.PaymentStatus !== 'unset'"
+					  :title="paymentTitle">
+					<i class="bi me-1" :class="paymentBadge.icon"></i>
+					{{paymentBadge.text}}
+				</span>
+				<a v-if="Peer.telegram"
+				   :href="'https://t.me/' + Peer.telegram.replace(/^@/, '')"
 				   target="_blank"
 				   rel="noopener noreferrer"
 				   class="small text-decoration-none"

@@ -195,6 +195,8 @@ class AmneziaConfiguration(WireguardConfiguration):
                                         "keepalive": self.DashboardConfig.GetConfig("Peers", "peer_keep_alive")[1],
                                         "notes": "",
                                         "telegram": "",
+                                        "paid_until": None,
+                                        "payment_comment": "",
                                         "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
                                         "preshared_key": i["PresharedKey"] if "PresharedKey" in i.keys() else "",
                                         "split_tunnel_ips": "",

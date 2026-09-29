@@ -145,7 +145,11 @@ class DashboardConfig:
             'preshared_key': db.String(255),
             'split_tunnel_ips': db.Text,
             'split_tunnel_mode': db.String(10),
-            'telegram': db.String(255)
+            'telegram': db.String(255),
+            # Трекер оплаты на пире. Тип выбирается по БД, поэтому здесь
+            # передаётся уже готовый объект типа, а не класс.
+            'paid_until': (db.DATETIME if 'sqlite:///' in ConnectionString("wgdashboard") else db.TIMESTAMP),
+            'payment_comment': db.Text
         }
 
         inspector = db.inspect(self.engine)

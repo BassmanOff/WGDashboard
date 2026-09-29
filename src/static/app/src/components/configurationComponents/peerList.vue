@@ -14,6 +14,7 @@ import PeerIntersectionObserver from "@/components/configurationComponents/peerI
 import ConfigurationDescription from "@/components/configurationComponents/configurationDescription.vue";
 import PeerDetailsModal from "@/components/configurationComponents/peerDetailsModal.vue";
 import {parseCidr} from "cidr-tools";
+import {GetLocale} from "@/utilities/locale.js";
 
 // Async Components
 const PeerSearchBar = defineAsyncComponent(() => import("@/components/configurationComponents/peerSearchBar.vue"))
@@ -146,6 +147,8 @@ const toggleConfiguration = async () => {
 const configurationSummary = computed(() => {
 	return {
 		connectedPeers: configurationPeers.value.filter(x => x.status === "running").length,
+		overduePeers: configurationPeers.value.filter(x => x.PaymentStatus === 'expired').length,
+		expiringPeers: configurationPeers.value.filter(x => x.PaymentStatus === 'expiring').length,
 		totalUsage: configurationPeers.value.length > 0 ?
 			configurationPeers.value.filter(x => !x.restricted)
 				.map(x => x.total_data + x.cumu_data).reduce((a, b) => a + b, 0).toFixed(4) : 0,
@@ -177,12 +180,19 @@ const firstAllowedIPCount = (allowed_ip) => {
 	}
 }
 
+// Фильтр "только с просроченной оплатой". Счётчик бейджей на карточках
+// пиров заменил прежний фильтр по клиентам: клиент = пир.
+const onlyOverdue = ref(false)
+const overdueCount = computed(() =>
+	configurationPeers.value.filter(x => x.PaymentStatus === 'expired').length)
+
 const searchPeers = computed(() => {
-	const result = wireguardConfigurationStore.searchString ?
+	let result = wireguardConfigurationStore.searchString ?
 		configurationPeers.value.filter(x => {
 			return (x.name.includes(wireguardConfigurationStore.searchString) ||
 				x.id.includes(wireguardConfigurationStore.searchString) ||
-				x.allowed_ip.includes(wireguardConfigurationStore.searchString))
+				x.allowed_ip.includes(wireguardConfigurationStore.searchString) ||
+				(x.telegram || '').includes(wireguardConfigurationStore.searchString))
 				&& !hiddenPeers.value.includes(x.id)
 				&& (
 					wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags || (!wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags && taggedPeers.value.includes(x.id))
@@ -190,6 +200,10 @@ const searchPeers = computed(() => {
 		}) : configurationPeers.value.filter(x => !hiddenPeers.value.includes(x.id) && (
 			wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags || (!wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags && taggedPeers.value.includes(x.id))
 		));
+
+	if (onlyOverdue.value){
+		result = result.filter(x => x.PaymentStatus === 'expired');
+	}
 
 	if (dashboardStore.Configuration.Server.dashboard_sort === "restricted"){
 		return result.sort((a, b) => {
@@ -391,6 +405,23 @@ watch(() => route.query.id, (newValue) => {
 				</div>
 			</div>
 		</div>
+	</div>
+	<div class="d-flex flex-wrap align-items-center gap-2 mb-2"
+	     v-if="configurationSummary.overduePeers > 0 || configurationSummary.expiringPeers > 0">
+		<button class="btn btn-sm rounded-3"
+		        :class="[onlyOverdue ? 'btn-danger' : 'btn-body bg-body-secondary text-body-emphasis']"
+		        @click="onlyOverdue = !onlyOverdue"
+		        :title="GetLocale('Show only peers with overdue payment')">
+			<i class="bi bi-exclamation-triangle-fill me-1"></i>
+			<LocaleText t="Overdue"></LocaleText>
+			<span class="ms-1">{{configurationSummary.overduePeers}}</span>
+		</button>
+		<span class="badge rounded-pill text-bg-warning"
+		      v-if="configurationSummary.expiringPeers > 0 && !onlyOverdue">
+			<i class="bi bi-exclamation-triangle me-1"></i>
+			<LocaleText t="Expiring soon"></LocaleText>
+			{{configurationSummary.expiringPeers}}
+		</span>
 	</div>
 	<PeerDataUsageCharts
 		:configurationPeers="configurationPeers"

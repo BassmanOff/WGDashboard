@@ -42,6 +42,7 @@ from modules.DashboardClients import DashboardClients
 from modules.DashboardPlugins import DashboardPlugins
 from modules.DashboardWebHooks import DashboardWebHooks
 from modules.DashboardPushNotifications import DashboardPushNotifications
+from modules.DashboardPeerPaymentsStore import DashboardPeerPayments
 from modules.NewConfigurationTemplates import NewConfigurationTemplates
 
 class CustomJsonEncoder(DefaultJSONProvider):
@@ -156,12 +157,12 @@ def pushNotificationBackgroundThread():
                     if (now - lastCheck) >= interval:
                         lastCheck = now
                         expiringDays = DashboardPushNotifications.GetExpiringDays()
-                        overdue = DashboardClients.GetOverdueClients()
-                        expiring = [c for c in DashboardClients.GetAllClientsRaw()
-                                    if c.get('PaymentStatus') == 'expiring'
-                                    and (c.get('DaysRemaining') or 0) <= expiringDays]
-                        state = f"{len(overdue)}/{len(expiring)}"
-                        # Уведомляем только при изменении состояния, чтобы не спамить
+                        overdue = DashboardPeerPayments.GetOverduePeers()
+                        expiring = DashboardPeerPayments.GetExpiringPeers(expiringDays)
+                        # Хеш включает остаток дней, а не только количество:
+                        # иначе переход "истекает через 7 дней" в "через 6"
+                        # не считался бы изменением и уведомление не ушло бы
+                        state = DashboardPeerPayments.GetStateHash()
                         if state != lastState:
                             lastState = state
                             if len(overdue) > 0 or len(expiring) > 0:
@@ -264,8 +265,12 @@ with app.app_context():
     NewConfigurationTemplates: NewConfigurationTemplates = NewConfigurationTemplates()
     InitWireguardConfigurationsList(startup=True)
     DashboardClients: DashboardClients = DashboardClients(WireguardConfigurations)
+    # Создаётся после InitWireguardConfigurationsList, потому что собирает
+    # пиры из уже загруженных конфигураций
+    DashboardPeerPayments: DashboardPeerPayments = DashboardPeerPayments(
+        WireguardConfigurations, DashboardConfig)
     DashboardPushNotifications: DashboardPushNotifications = DashboardPushNotifications(
-        DashboardConfig, DashboardClients)
+        DashboardConfig, DashboardPeerPayments)
     app.register_blueprint(createClientBlueprint(WireguardConfigurations, DashboardConfig, DashboardClients))
 
 _, APP_PREFIX = DashboardConfig.GetConfig("Server", "app_prefix")
@@ -789,35 +794,28 @@ def API_updatePeerSettings(configName):
         split_tunnel_ips = data.get('split_tunnel_ips', '')
         split_tunnel_mode = data.get('split_tunnel_mode', 'include')
         telegram = data.get('telegram', '')
+        paid_until = data.get('paid_until', None)
+        payment_comment = data.get('payment_comment', '')
         wireguardConfig = WireguardConfigurations[configName]
         foundPeer, peer = wireguardConfig.searchPeer(id)
         if foundPeer:
-            if wireguardConfig.Protocol == 'wg':
-                status, msg = peer.updatePeer(name,
-                                              private_key,
-                                              preshared_key, 
-                                              dns_addresses,
-                                              allowed_ip,
-                                              endpoint_allowed_ip,
-                                              mtu,
-                                              keepalive,
-                                              notes,
-                                              split_tunnel_ips,
-                                              split_tunnel_mode,
-                                              telegram)
-            else:
-                status, msg = peer.updatePeer(name,
-                                              private_key,
-                                              preshared_key,
-                                              dns_addresses,
-                                              allowed_ip,
-                                              endpoint_allowed_ip,
-                                              mtu,
-                                              keepalive,
-                                              notes,
-                                              split_tunnel_ips,
-                                              split_tunnel_mode,
-                                              telegram)
+            # Ветвление по протоколу больше не нужно: реализация
+            # updatePeer в Peer и AmneziaPeer совпадает, а вызовы awg/wg
+            # строятся из self.configuration.Protocol
+            status, msg = peer.updatePeer(name,
+                                          private_key,
+                                          preshared_key,
+                                          dns_addresses,
+                                          allowed_ip,
+                                          endpoint_allowed_ip,
+                                          mtu,
+                                          keepalive,
+                                          notes,
+                                          split_tunnel_ips,
+                                          split_tunnel_mode,
+                                          telegram,
+                                          paid_until,
+                                          payment_comment)
             wireguardConfig.getPeers()
             DashboardWebHooks.RunWebHook('peer_updated', {
                 "configuration": wireguardConfig.Name,
@@ -1836,6 +1834,46 @@ def API_Clients_ExtendPayment():
 @app.get(f'{APP_PREFIX}/api/clients/overdueClients')
 def API_Clients_OverdueClients():
     return ResponseObject(data=DashboardClients.GetOverdueClients())
+
+# ---------------------------------------------------------------------
+# Оплата на уровне пиров
+#
+# Основной путь: у администратора клиент = пир. Учётные записи клиентов
+# (раздел Clients и клиентский портал) остаются для случаев, когда портал
+# самообслуживания нужен, но не обязательны.
+# ---------------------------------------------------------------------
+
+@app.get(f'{APP_PREFIX}/api/payments/all')
+def API_Payments_All():
+    return ResponseObject(data=DashboardPeerPayments.GetAllPeerPayments())
+
+@app.get(f'{APP_PREFIX}/api/payments/overdue')
+def API_Payments_Overdue():
+    return ResponseObject(data=DashboardPeerPayments.GetOverduePeers())
+
+@app.post(f'{APP_PREFIX}/api/payments/extend')
+def API_Payments_Extend():
+    """Продлевает срок оплаты пира на N дней. Туннель не затрагивается."""
+    data = request.get_json() or {}
+    configName = data.get('Configuration')
+    peerId = data.get('Peer')
+    days = data.get('Days')
+    paidUntil = data.get('PaidUntil')
+    if not configName or not peerId:
+        return ResponseObject(False, "Configuration and Peer are required")
+    if days is None and paidUntil is None:
+        return ResponseObject(False, "Either Days or PaidUntil is required")
+    if days is not None:
+        if isinstance(days, str):
+            if not days.isnumeric():
+                return ResponseObject(False, "Days must be a number")
+            days = int(days)
+        if not isinstance(days, int):
+            return ResponseObject(False, "Days must be a number")
+    status, result = DashboardPeerPayments.UpdatePeerPayment(
+        configName, peerId, Days=days, PaidUntil=paidUntil)
+    return ResponseObject(status=status, data=result,
+                          message=None if status else result)
 
 @app.post(f'{APP_PREFIX}/api/clients/deleteClient')
 def API_Clients_DeleteClient():

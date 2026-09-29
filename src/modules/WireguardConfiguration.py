@@ -250,6 +250,12 @@ class WireguardConfiguration:
         return True
 
     def createDatabase(self, dbName = None):
+        # Тип колонки для дат зависит от БД: sqlite не имеет TIMESTAMP
+        if self.DashboardConfig.GetConfig("Database", "type")[1] == 'sqlite':
+            time_col_type = sqlalchemy.DATETIME
+        else:
+            time_col_type = sqlalchemy.TIMESTAMP
+
         def generate_column_obj():
             return [
                 sqlalchemy.Column('id', sqlalchemy.String(255), nullable=False, primary_key=True),
@@ -278,7 +284,10 @@ class WireguardConfiguration:
                 # Контакт администратора для пира. Отдельная от notes
                 # колонка, потому что по нему ищут клиента, а notes -
                 # свободный текст произвольного содержания
-                sqlalchemy.Column('telegram', sqlalchemy.String(255))
+                sqlalchemy.Column('telegram', sqlalchemy.String(255)),
+                # Трекер оплаты, привязанный к пиру, а не к учётной записи
+                sqlalchemy.Column('paid_until', time_col_type),
+                sqlalchemy.Column('payment_comment', sqlalchemy.Text)
             ]
 
         if dbName is None:
@@ -295,11 +304,6 @@ class WireguardConfiguration:
         self.peersDeletedTable = sqlalchemy.Table(
             f'{dbName}_deleted', self.metadata, *generate_column_obj(), extend_existing=True
         )
-
-        if self.DashboardConfig.GetConfig("Database", "type")[1] == 'sqlite':
-            time_col_type = sqlalchemy.DATETIME
-        else:
-            time_col_type = sqlalchemy.TIMESTAMP
 
         self.peersTransferTable = sqlalchemy.Table(
             f'{dbName}_transfer', self.metadata,
@@ -451,6 +455,8 @@ class WireguardConfiguration:
                                     "keepalive": self.DashboardConfig.GetConfig("Peers", "peer_keep_alive")[1] if len(self.DashboardConfig.GetConfig("Peers", "peer_keep_alive")[1]) > 0 else None,
                                     "notes": "",
                                     "telegram": "",
+                                    "paid_until": None,
+                                    "payment_comment": "",
                                     "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
                                     "preshared_key": i["PresharedKey"] if "PresharedKey" in i.keys() else ""
                                 }
@@ -554,6 +560,8 @@ class WireguardConfiguration:
                         "keepalive": i['keepalive'],
                         "notes": i.get("notes", ""),
                         "telegram": i.get("telegram", ""),
+                        "paid_until": None,
+                        "payment_comment": i.get("payment_comment", ""),
                         "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
                         "preshared_key": i["preshared_key"]
                     }

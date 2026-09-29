@@ -19,10 +19,12 @@ class PushNotificationError(Exception):
 
 
 class DashboardPushNotifications:
-    def __init__(self, dashboardConfig, dashboardClients):
+    def __init__(self, dashboardConfig, peerPayments):
         self.logger = DashboardLogger()
         self.dashboardConfig = dashboardConfig
-        self.dashboardClients = dashboardClients
+        # Оплата отслеживается по пирам, поэтому источник - сводка по
+        # оплатам пиров, а не учётные записи клиентов
+        self.peerPayments = peerPayments
         self.engine = db.create_engine(ConnectionString("wgdashboard"))
         self.metadata = db.MetaData()
         timeType = (db.DATETIME if 'sqlite:///' in ConnectionString("wgdashboard") else db.TIMESTAMP)
@@ -381,29 +383,27 @@ class DashboardPushNotifications:
 
     def SendPaymentReminders(self, expiringDays: int = None) -> dict:
         """
-        Проверяет клиентов и уведомляет администратора о просроченных.
+        Проверяет пиры и уведомляет администратора о просроченных.
         Отправка выполняется только при смене состояния (вызывающий код
         сравнивает хеш), поэтому повторов при каждом цикле не будет.
         """
         result = {"sent": 0, "failed": 0, "error": None, "notified": []}
         if expiringDays is None:
             expiringDays = self.GetExpiringDays()
-        overdue = self.dashboardClients.GetOverdueClients()
-        expiring = [c for c in self.dashboardClients.GetAllClientsRaw()
-                    if c.get('PaymentStatus') == 'expiring'
-                    and (c.get('DaysRemaining') or 0) <= expiringDays]
+        overdue = self.peerPayments.GetOverduePeers()
+        expiring = self.peerPayments.GetExpiringPeers(expiringDays)
         if len(overdue) == 0 and len(expiring) == 0:
             return result
 
         lines = []
         for c in overdue:
-            name = c.get('Name') or c.get('Email')
-            tg = c.get('Telegram')
+            name = c.get('name') or c.get('id')
+            tg = c.get('telegram')
             days = abs(c.get('DaysRemaining') or 0)
             contact = f" ({tg})" if tg else ""
             lines.append(f"{name}{contact} — просрочка {days} дн.")
         for c in expiring:
-            name = c.get('Name') or c.get('Email')
+            name = c.get('name') or c.get('id')
             lines.append(f"{name} — истекает через {c.get('DaysRemaining')} дн.")
 
         title = "WGDashboard: оплата"
@@ -413,6 +413,8 @@ class DashboardPushNotifications:
         else:
             body = f"Скоро истекает: {len(expiring)}\n" + "\n".join(lines[:8])
 
-        result = self.SendToAll(title, body, url="./clients", tag="wgd-payment")
-        result["notified"] = [c.get('Email') for c in overdue]
+        # Ссылка ведёт в конфигурацию, где живут пиры, а не в раздел
+        # клиентов: оплата теперь отслеживается по пирам
+        result = self.SendToAll(title, body, url="./", tag="wgd-payment")
+        result["notified"] = [c.get('id') for c in overdue]
         return result

@@ -12,6 +12,7 @@ import sqlalchemy as db
 from .PeerJob import PeerJob
 from  flask import current_app
 from .PeerShareLink import PeerShareLink
+from .DashboardPeerPayments import ComputePaymentStatus, ParsePaidUntilInput
 from .Utilities import GenerateWireguardPublicKey, CheckAddress, ValidateDNSAddress, ValidateSplitTunnelList
 
 
@@ -47,6 +48,15 @@ class Peer:
         self.split_tunnel_mode = tableData.get("split_tunnel_mode") or "include"
         # Контакт администратора, виден в списке пиров и его настройках
         self.telegram = tableData.get("telegram") or ""
+        # Трекер оплаты. Срок и статус считаются на пире, потому что пир
+        # может существовать без учётной записи клиента, а для админа
+        # "клиент" - это именно пир.
+        self.paid_until = tableData.get("paid_until")
+        self.payment_comment = tableData.get("payment_comment") or ""
+        status, daysRemaining, paidUntilFormatted = ComputePaymentStatus(self.paid_until)
+        self.PaymentStatus = status
+        self.DaysRemaining = daysRemaining
+        self.PaidUntilFormatted = paidUntilFormatted
         self.jobs: list[PeerJob] = []
         self.ShareLink: list[PeerShareLink] = []
         self.getJobs()
@@ -71,9 +81,88 @@ class Peer:
                    notes: str,
                    split_tunnel_ips: str = "",
                    split_tunnel_mode: str = "include",
-                   telegram: str = ""
+                   telegram: str = "",
+                   paid_until: str = None,
+                   payment_comment: str = ""
                    ) -> tuple[bool, str | None]:
 
+        parsedPaidUntil, paidErr = ParsePaidUntilInput(paid_until)
+        if paidErr:
+            return False, paidErr
+
+        # Данные администратора (имя, заметки, контакт, оплата) к VPN
+        # отношения не имеют, поэтому при их изменении вызов awg не
+        # нужен. Иначе продление оплаты рвало бы туннель и вызывало лишний
+        # handshake. Поле name попадает в .conf как комментарий, но само по
+        # себе awg не меняет, поэтому тоже не считается.
+        vpnChanged = (private_key != self.private_key
+                      or preshared_key != self.preshared_key
+                      or dns_addresses != self.DNS
+                      or allowed_ip != self.allowed_ip
+                      or endpoint_allowed_ip != self.endpoint_allowed_ip
+                      or str(mtu) != str(self.mtu)
+                      or str(keepalive) != str(self.keepalive)
+                      or split_tunnel_ips != self.split_tunnel_ips
+                      or split_tunnel_mode != self.split_tunnel_mode)
+
+        if vpnChanged:
+            status, startMsg = self.__runAwgUpdate(
+                private_key, preshared_key, dns_addresses, allowed_ip,
+                endpoint_allowed_ip, mtu, keepalive,
+                split_tunnel_ips, split_tunnel_mode)
+            if not status:
+                return False, startMsg
+
+        values = {
+            "name": name,
+            "notes": notes,
+            "telegram": telegram.strip(),
+            "paid_until": parsedPaidUntil,
+            "payment_comment": payment_comment
+        }
+        if vpnChanged:
+            values.update({
+                "private_key": private_key,
+                "DNS": dns_addresses,
+                "endpoint_allowed_ip": endpoint_allowed_ip,
+                "mtu": mtu,
+                "keepalive": keepalive,
+                "preshared_key": preshared_key,
+                "split_tunnel_ips": split_tunnel_ips,
+                "split_tunnel_mode": split_tunnel_mode
+            })
+        with self.configuration.engine.begin() as conn:
+            conn.execute(
+                self.configuration.peersTable.update().values(values).where(
+                    self.configuration.peersTable.c.id == self.id
+                )
+            )
+        self.configuration.getPeers()
+        return True, None
+
+    def ExtendPayment(self, Days: int) -> tuple[bool, str | None]:
+        """Продлевает срок оплаты на Days дней, не трогая туннель."""
+        if not isinstance(Days, int) or Days < 1 or Days > 3650:
+            return False, "Days must be an integer between 1 and 3650"
+        base = self.paid_until
+        if base is None:
+            base = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        newDate = base + datetime.timedelta(days=Days)
+        with self.configuration.engine.begin() as conn:
+            conn.execute(
+                self.configuration.peersTable.update().values({
+                    "paid_until": newDate
+                }).where(
+                    self.configuration.peersTable.c.id == self.id
+                )
+            )
+        self.configuration.getPeers()
+        return True, None
+
+    def __runAwgUpdate(self, private_key, preshared_key, dns_addresses,
+                       allowed_ip, endpoint_allowed_ip, mtu, keepalive,
+                       split_tunnel_ips, split_tunnel_mode) -> tuple[bool, str | None]:
+        """Валидация и применение изменений, требующих вмешательства awg."""
         if not self.configuration.getStatus():
             # Не игнорируем результат: если awg-quick up не удался, команда
             # "awg set" ниже тоже упадёт и пользователь увидит безликое
@@ -156,28 +245,10 @@ class Peer:
             command = [f"{self.configuration.Protocol}-quick", "save", self.configuration.Name]
             saveConfig = subprocess.check_output(command, stderr=subprocess.STDOUT)
 
-            if f"wg showconf {self.configuration.Name}" not in saveConfig.decode().strip('\n'):
+            if f"{self.configuration.Protocol} showconf {self.configuration.Name}" not in saveConfig.decode().strip('\n'):
+                # Уточнение: awg-quick save печатает "awg showconf <имя>"
                 current_app.logger.error("Update peer failed when saving the configuration")
                 return False, "Internal server error"
-
-            with self.configuration.engine.begin() as conn:
-                conn.execute(
-                    self.configuration.peersTable.update().values({
-                        "name": name,
-                        "private_key": private_key,
-                        "DNS": dns_addresses,
-                        "endpoint_allowed_ip": endpoint_allowed_ip,
-                        "mtu": mtu,
-                        "keepalive": keepalive,
-                        "notes": notes,
-                        "preshared_key": preshared_key,
-                        "split_tunnel_ips": split_tunnel_ips,
-                        "split_tunnel_mode": split_tunnel_mode,
-                        "telegram": telegram.strip()
-                    }).where(
-                        self.configuration.peersTable.c.id == self.id
-                    )
-                )
             return True, None
         except subprocess.CalledProcessError as exc:
             current_app.logger.error(f"Subprocess call failed:\n{exc.output.decode('UTF-8')}")
