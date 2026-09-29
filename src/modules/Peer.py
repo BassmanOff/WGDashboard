@@ -296,9 +296,15 @@ class Peer:
 
         if len(result) == 0:
             # Имя состояло только из символов, которые нельзя оставить.
-            # Публичный ключ всегда состоит из безопасных символов base64,
-            # поэтому даёт уникальное и осмысленное имя.
-            result = self.id or "peer"
+            # Публичный ключ уникален, но его base64-алфавит содержит "/",
+            # поэтому через тот же фильтр: иначе в имени появился бы
+            # разделитель пути.
+            result = "".join(
+                ch for ch in (self.id or "")
+                if ch.isalnum() or ch in safe
+            ).strip(". ")
+        if len(result) == 0:
+            result = "peer"
         return result
 
     def downloadPeer(self) -> dict[str, str]:
