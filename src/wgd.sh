@@ -247,10 +247,13 @@ _checkWireguard(){
 
 
 _checkPythonVersion(){
-	version_pass=$($pythonExecutable -c 'import sys; print("1") if (sys.version_info.major == 3 and sys.version_info.minor >= 12) else print("0");')
+	# Debian 12 ships Python 3.11, and the code does not use any
+	# 3.12-only syntax, so 3.10+ is accepted here instead of upstream's
+	# hard 3.12 requirement.
+	version_pass=$($pythonExecutable -c 'import sys; print("1") if (sys.version_info.major == 3 and sys.version_info.minor >= 10) else print("0");')
 	version=$($pythonExecutable --version)
 	if [ $version_pass == "1" ]
-	  	then 
+	  	then
 	  		printf "[WGDashboard] %s Found compatible version of Python. Will be using %s to install WGDashboard.\n" "$heavy_checkmark" "$($pythonExecutable --version)"
 			return;
     elif python3.12 --version > /dev/null 2>&1
@@ -259,7 +262,7 @@ _checkPythonVersion(){
     	 	pythonExecutable="python3.12"
 	else
 		printf "[WGDashboard] %s Could not find a compatible version of Python. Current Python is %s.\n" "$heavy_crossmark" "$version"
-		printf "[WGDashboard] WGDashboard required Python 3.12 or above. Halting install now.\n"
+		printf "[WGDashboard] WGDashboard requires Python 3.10 or above. Halting install now.\n"
 		kill $TOP_PID
 	fi
 }
