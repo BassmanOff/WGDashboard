@@ -124,11 +124,13 @@ class WireguardConfiguration:
             if self.Protocol == 'awg':
                 # AmneziaWG 2.0+ and 3.1 parameters.
                 # Пустые значения не записываются: awg-quick не принимает "Key = " без значения.
+                # str() обязателен: у части параметров целочисленные значения по умолчанию
+                # (S3/S4 = 0), а configparser принимает только строковые значения.
                 for key in self.AMNEZIA_PARAMETERS:
                     value = getattr(self, key, None)
                     if value is None or (isinstance(value, str) and len(value.strip()) == 0):
                         continue
-                    self.__parser["Interface"][key] = value
+                    self.__parser["Interface"][key] = str(value)
 
             if "Backup" not in data.keys():
                 self.createDatabase()
