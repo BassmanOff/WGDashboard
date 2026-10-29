@@ -310,6 +310,13 @@ class DashboardBlocklist:
                 ports.append(port)
         return ports
 
+    def _appPort(self) -> int:
+        """Порт админ-панели - для исключения в OUTPUT."""
+        try:
+            return int(self.dashboardConfig.GetConfig("Server", "app_port")[1])
+        except (TypeError, ValueError, AttributeError):
+            return 10086
+
     def GetDnsServers(self) -> list[str]:
         """
         DNS, которым нужен доступ сквозь блок:
@@ -414,6 +421,11 @@ class DashboardBlocklist:
             # списка, а провайдерские блоки в списке широкие. Список блокирует
             # только НОВЫЕ исходящие соединения сервера.
             "\t\tct state established,related accept",
+            # Страховка на случай проблем с conntrack (переполнение таблицы,
+            # обход трекинга): ответы SSH и панели по исходному порту всегда
+            # должны уходить. Иницировать соединения с этих портов сервер не
+            # умеет, поэтому правило не открывает лишнего.
+            "\t\ttcp sport { 22, " + str(self._appPort()) + " } accept",
         ]
         if len(listenPorts) > 0:
             # Исключение для ответов AWG-клиентам: все пакеты от сервера к
