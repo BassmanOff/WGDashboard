@@ -15,6 +15,7 @@ export default {
 		const store = DashboardConfigurationStore();
 		const theme = ref("");
 		const peerConfiguration = ref(undefined);
+		const peerAmneziaQR = ref(undefined);
 		const blob = ref(new Blob())
 		await fetchGet("/api/getDashboardTheme", {}, (res) => {
 			theme.value = res.data
@@ -30,6 +31,7 @@ export default {
 			}, (res) => {
 				if (res.status){
 					peerConfiguration.value = res.data;
+					peerAmneziaQR.value = res.data.amneziaQRPack || undefined;
 					blob.value = new Blob([peerConfiguration.value.file], { type: "text/plain" });
 				}else{
 					peerConfiguration.value = undefined
@@ -37,11 +39,17 @@ export default {
 				loaded.value = true;
 			})
 		}
-		return {store, theme, peerConfiguration, blob}
+		return {store, theme, peerConfiguration, peerAmneziaQR, blob}
 	},
 	mounted() {
 		if(this.peerConfiguration){
 			QRCode.toCanvas(document.querySelector("#qrcode"), this.peerConfiguration.file,  (error) => {
+				if (error) console.error(error)
+			})
+		}
+		if(this.peerAmneziaQR){
+			// QR формата AmneziaVPN (magic + zlib + base64url) для приложения AmneziaVPN
+			QRCode.toCanvas(document.querySelector("#awg_vpn_qrcode"), this.peerAmneziaQR,  (error) => {
 				if (error) console.error(error)
 			})
 		}
@@ -91,6 +99,11 @@ export default {
 					<LocaleText t="Scan QR Code with the WireGuard App to add peer"></LocaleText>
 				</div>
 				<canvas id="qrcode" class="rounded-3 shadow animate__animated animate__fadeInUp mb-3" ref="qrcode"></canvas>
+				<LocaleText t="Scan with WireGuard App" class="text-muted animate__animated animate__fadeInUp"></LocaleText>
+				<div v-if="this.peerAmneziaQR" class="d-flex flex-column gap-2 align-items-center">
+					<canvas id="awg_vpn_qrcode" class="rounded-3 shadow animate__animated animate__fadeInUp mb-3"></canvas>
+					<LocaleText t="Scan with AmneziaVPN App" class="text-muted"></LocaleText>
+				</div>
 				<p class="text-muted animate__animated animate__fadeInUp mb-1"
 				   style="animation-delay: 0.2s;"> 
 					<LocaleText t="or click the button below to download the "></LocaleText>

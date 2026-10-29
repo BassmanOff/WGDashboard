@@ -4,7 +4,7 @@ Peer
 import base64
 import datetime
 import json
-import os, subprocess, uuid, random, re, ipaddress
+import os, subprocess, uuid, random, re, ipaddress, zlib, struct
 from datetime import timedelta
 
 import jinja2
@@ -415,24 +415,92 @@ class Peer:
 
 
         if self.configuration.Protocol == "awg":
-            final["amneziaVPN"] = json.dumps({
-                "containers": [{
-                    "awg": {
-                        "isThirdPartyConfig": True,
-                        "last_config": final['file'],
-                        "port": self.configuration.ListenPort,
-                        "transport_proto": "udp"
-                    },
-                    "container": "amnezia-awg"
-                }],
-                "defaultContainer": "amnezia-awg",
-                "description": self.name,
-                "hostName": (
-                    self.configuration.configurationInfo.OverridePeerSettings.PeerRemoteEndpoint 
-                        if self.configuration.configurationInfo.OverridePeerSettings.PeerRemoteEndpoint 
-                        else self.configuration.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1])
-            })
+            amneziaConfig = self.__buildAmneziaConfig(final["file"])
+            final["amneziaVPN"] = json.dumps(amneziaConfig)
+            final["amneziaQRPack"] = self.__buildAmneziaQRPack(amneziaConfig)
         return final
+
+    def __buildAmneziaConfig(self, configText: str) -> dict:
+        """
+        Структура .vpn-конфига AmneziaVPN: контейнер amnezia-awg с
+        last_config в виде JSON-строки. Приложение читает параметры
+        (Jc/S1/H1..., ключи, порт, PSK) именно из этой строки, а не из
+        текста конфига, поэтому класть туда "голый" .conf нельзя.
+        Формат повторяет рабочую реализацию wg-easy (generateAmneziaVPNClientConfig).
+        """
+        config = self.configuration
+        override = config.configurationInfo.OverridePeerSettings
+        endpoint = (override.PeerRemoteEndpoint
+                    if override.PeerRemoteEndpoint
+                    else config.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1])
+        port = config.ListenPort
+
+        awgParams = {}
+        for key in ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4",
+                    "H1", "H2", "H3", "H4",
+                    "I1", "I2", "I3", "I4", "I5"):
+            value = getattr(config, key, None)
+            if value is None or (isinstance(value, str) and len(value.strip()) == 0):
+                continue
+            awgParams[key] = str(value)
+
+        allowedIps = [i.strip() for i in (
+            override.EndpointAllowedIPs if override.EndpointAllowedIPs
+            else self.endpoint_allowed_ip).split(",") if i.strip()]
+        dnsServers = [d.strip() for d in (self.DNS or "").split(",") if d.strip()]
+
+        mtu = override.MTU if override.MTU else self.mtu
+        keepalive = override.PersistentKeepalive if override.PersistentKeepalive else self.keepalive
+
+        lastConfig = {
+            **awgParams,
+            "allowed_ips": allowedIps,
+            "client_ip": self.allowed_ip,
+            "client_priv_key": self.private_key,
+            "config": configText,
+            "hostName": endpoint,
+            "port": int(port),
+            "psk_key": self.preshared_key or "",
+            "server_pub_key": config.PublicKey,
+        }
+        if mtu:
+            lastConfig["mtu"] = str(mtu)
+        if keepalive:
+            lastConfig["persistent_keep_alive"] = str(keepalive)
+
+        container = {
+            "isThirdPartyConfig": True,
+            "last_config": json.dumps(lastConfig, ensure_ascii=False),
+            "port": str(port),
+            "transport_proto": "udp",
+        }
+        if "S3" in awgParams and "S4" in awgParams:
+            container["protocol_version"] = "2"
+
+        return {
+            "containers": [{
+                "awg": container,
+                "container": "amnezia-awg",
+            }],
+            "defaultContainer": "amnezia-awg",
+            "description": self.name,
+            "dns1": dnsServers[0] if len(dnsServers) > 0 else "",
+            "dns2": dnsServers[1] if len(dnsServers) > 1 else "",
+            "hostName": endpoint,
+        }
+
+    @staticmethod
+    def __buildAmneziaQRPack(amneziaConfig: dict) -> str:
+        """
+        QR-пакет приложения AmneziaVPN:
+        [0..3] magic 0x07C00100, [4..7] len(zlib)+4, [8..11] len(json),
+        далее zlib-deflate JSON - всё в base64url. Другой формат
+        (просто base64 JSON) приложение не принимает: "error 900".
+        """
+        plain = json.dumps(amneziaConfig, ensure_ascii=False).encode("utf-8")
+        packed = zlib.compress(plain, 9)
+        header = struct.pack(">III", 0x07C00100, len(packed) + 4, len(plain))
+        return base64.urlsafe_b64encode(header + packed).decode()
 
     def downloadPeerConf(self) -> dict[str, str]:
         """Конфигурация пира в формате .conf (AmneziaWG / WireGuard)"""
@@ -445,25 +513,30 @@ class Peer:
     def downloadPeerJSON(self) -> dict[str, str]:
         """Конфигурация пира в формате .json (импорт в AmneziaVPN)"""
         peer_config = self.downloadPeer()
-        return {
-            "fileName": f"{peer_config['fileName']}.json",
-            "file": json.dumps({
+        if self.configuration.Protocol == "awg":
+            payload = json.dumps(
+                json.loads(peer_config["amneziaVPN"]), indent=2, ensure_ascii=False)
+        else:
+            payload = json.dumps({
                 "containers": [{
-                    "awg" if self.configuration.Protocol == "awg" else "wireguard": {
+                    "wireguard": {
                         "isThirdPartyConfig": True,
                         "last_config": peer_config['file'],
                         "port": self.configuration.ListenPort,
                         "transport_proto": "udp"
                     },
-                    "container": "amnezia-awg" if self.configuration.Protocol == "awg" else "amnezia-wg"
+                    "container": "amnezia-wg"
                 }],
-                "defaultContainer": "amnezia-awg" if self.configuration.Protocol == "awg" else "amnezia-wg",
+                "defaultContainer": "amnezia-wg",
                 "description": self.name,
                 "hostName": (
                     self.configuration.configurationInfo.OverridePeerSettings.PeerRemoteEndpoint
                         if self.configuration.configurationInfo.OverridePeerSettings.PeerRemoteEndpoint
                         else self.configuration.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1])
             }, indent=2, ensure_ascii=False)
+        return {
+            "fileName": f"{peer_config['fileName']}.json",
+            "file": payload
         }
 
     def downloadPeerIPList(self) -> dict[str, str]:
