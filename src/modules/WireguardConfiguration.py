@@ -24,6 +24,7 @@ from .Utilities import StringToBoolean, \
     CheckPeerKey
 from .WireguardConfigurationInfo import WireguardConfigurationInfo, PeerGroupsClass
 from .DashboardWebHooks import DashboardWebHooks
+from .AmneziaValidation import ValidateAmneziaWGSettings
 
 
 class WireguardConfiguration:
@@ -175,7 +176,80 @@ class WireguardConfiguration:
     def getRawConfigurationFile(self):
         return open(self.configPath, 'r').read()
 
+    @staticmethod
+    def __stringifyConfigValue(value) -> str:
+        """
+        Значение для .conf/атрибута: bool из JSON (true/false) даёт
+        'on'/'off' (пригодно для RandomTrailers/DisableCookies), остальное —
+        строку без пробелов по краям.
+        """
+        if isinstance(value, bool):
+            return "on" if value else "off"
+        return str(value).strip()
+
+    def __validateAmneziaEditData(self, newData: dict) -> tuple[bool, str]:
+        """
+        Единая серверная валидация awg-параметров при правке существующей
+        конфигурации (API updateWireguardConfiguration и любые другие
+        вызовы updateConfigurationSettings).
+
+        Валидируются только ПРЕДСТАВЛЕННЫЕ в запросе параметры: значения,
+        которых нет, не меняются и не переоцениваются — иначе легаси-
+        конфигурацию с параметрами, внесёнными до появления валидации,
+        нельзя было бы править даже по никак не связанным полям.
+        Взаимные ограничения (Jmax >= Jmin, непересечение H1-H4,
+        HeaderProtectionKey требует S1-S4 >= 12) проверяются по
+        объединению представленных и текущих значений.
+        """
+        if self.Protocol != 'awg':
+            return True, ""
+        presented = {
+            key: newData[key]
+            for key in self.AMNEZIA_PARAMETERS
+            if key in newData and newData[key] is not None
+        }
+        if len(presented) == 0:
+            return True, ""
+        existing = {key: getattr(self, key, "") for key in self.AMNEZIA_PARAMETERS}
+        return ValidateAmneziaWGSettings(presented, existing)
+
+    def __validateAmneziaRawConfiguration(self, rawConfiguration: str) -> tuple[bool, str]:
+        """
+        Единая серверная валидация awg-параметров при замене raw-.conf
+        (API updateWireguardConfigurationRawFile): параметры берутся из
+        секции [Interface] проставляемого текста и прогоняются через ту же
+        ValidateAmneziaWGSettings (existing не передаётся: raw-файл
+        заменяет файл целиком).
+        """
+        if self.Protocol != 'awg':
+            return True, ""
+        params = {}
+        inInterface = False
+        for line in (rawConfiguration or "").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                inInterface = stripped == "[Interface]"
+                continue
+            if not inInterface or len(stripped) == 0 \
+                    or stripped.startswith("#") or stripped.startswith(";"):
+                continue
+            split = re.split(r'\s*=\s*', stripped, maxsplit=1)
+            if len(split) == 2 and split[0] in self.AMNEZIA_PARAMETERS:
+                params[split[0]] = split[1].strip()
+        if len(params) == 0:
+            return True, ""
+        valid, msg = ValidateAmneziaWGSettings(params)
+        if not valid:
+            return False, f"Invalid AmneziaWG parameters: {msg}"
+        return True, ""
+
     def updateRawConfigurationFile(self, newRawConfiguration):
+        valid, msg = self.__validateAmneziaRawConfiguration(newRawConfiguration)
+        if not valid:
+            # До изменений: файл не переписывается, бэкап не создаётся,
+            # интерфейс не переключается
+            return False, msg
+
         backupStatus, backup = self.backupConfigurationFile()
         if not backupStatus:
             return False, "Cannot create backup"
@@ -1055,6 +1129,12 @@ class WireguardConfiguration:
         return True, zip
 
     def updateConfigurationSettings(self, newData: dict) -> tuple[bool, str]:
+        # Единая серверная валидация awg-параметров ДО любых изменений:
+        # невалидные данные не сохраняются и не применяются, интерфейс
+        # (если был поднят) остаётся в прежнем состоянии
+        valid, msg = self.__validateAmneziaEditData(newData)
+        if not valid:
+            return False, msg
         if self.Status:
             self.toggleConfiguration()
         original = []
@@ -1080,7 +1160,7 @@ class WireguardConfiguration:
                 # Пропускаем отсутствующие ключи, чтобы не ломать сохранение из старого фронтенда/API
                 if key not in newData or newData[key] is None:
                     continue
-                value = str(newData[key]).strip()
+                value = self.__stringifyConfigValue(newData[key])
                 # awg-quick не принимает "Key = " без значения
                 if len(value) == 0:
                     continue
@@ -1097,7 +1177,7 @@ class WireguardConfiguration:
             return False, msg
         for i in allowEdit:
             if i in newData and newData[i] is not None:
-                setattr(self, i, str(newData[i]))
+                setattr(self, i, self.__stringifyConfigValue(newData[i]))
 
         return True, ""
 

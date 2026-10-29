@@ -248,3 +248,94 @@ def ValidateH1H4NonOverlapping(H1: str, H2: str, H3: str, H4: str) -> tuple[bool
                 )
 
     return True, ""
+
+
+# Параметры RandomTrailers/DisableCookies принимают булевы значения из JSON
+# (True/False) наравне со строками 'on'/'off': в конфиг попадает строка.
+_ON_OFF_PARAMS = ("RandomTrailers", "DisableCookies")
+
+
+def _normalizeParamValue(key: str, value) -> str:
+    if key in _ON_OFF_PARAMS and isinstance(value, bool):
+        return "on" if value else "off"
+    return str(value)
+
+
+def _safeFirstInt(value) -> int | None:
+    """Целое значение из 'N' или 'low-high' (нижняя граница диапазона)."""
+    text = str(value).strip()
+    if len(text) == 0:
+        return None
+    try:
+        return int(text.split("-", 1)[0].strip())
+    except ValueError:
+        return None
+
+
+def ValidateAmneziaWGSettings(params: dict, existing: dict = None) -> tuple[bool, str]:
+    """
+    Единая серверная валидация параметров AmneziaWG 3.1
+    (docs.amnezia.org/documentation/amnezia-wg/).
+
+    Вызывается из всех путей изменения конфигурации: создание
+    (API_addWireguardConfiguration), правка (updateConfigurationSettings)
+    и правка raw-файла (updateRawConfigurationFile).
+
+    params — представленные значения (валидруются на тип/диапазон);
+    existing — текущие значения конфигурации: нужны для взаимных
+    ограничений (Jmax >= Jmin, непересечение H1-H4, HeaderProtectionKey
+    требует S1-S4 >= 12): проверяется объединённый набор.
+
+    Возвращает (ok, message); message перечисляет ВСЕ нарушения. Отсутствие
+    параметра из проверки сознательно не выводится (нет выдуманных
+    неявных нулей): взаимные ограничения применяются только к тем парам,
+    значения которых известны (представлены или хранятся в конфигурации).
+    """
+    errors: list[str] = []
+
+    presented = {
+        key: _normalizeParamValue(key, value)
+        for key, value in (params or {}).items()
+        if value is not None
+    }
+    merged = dict(existing or {})
+    merged.update(presented)
+
+    if len(presented) > 0:
+        valid, perParam = ValidateAmneziaWG31Params(presented)
+        if not valid:
+            errors.extend(f"{key}: {msg}" for key, msg in perParam.items())
+
+    # Jmax >= Jmin: минимальный размер junk-пакета не может быть больше
+    # максимального (docs.amnezia.org: "Jmin не должен превышать Jmax")
+    jmin = _safeFirstInt(merged.get("Jmin", ""))
+    jmax = _safeFirstInt(merged.get("Jmax", ""))
+    if jmin is not None and jmax is not None and jmax < jmin:
+        errors.append(f"Jmax ({jmax}) must be >= Jmin ({jmin})")
+
+    # H1-H4 не пересекаются (compat-значения 1/2/3/4 исключены внутри)
+    hValid, hMsg = ValidateH1H4NonOverlapping(
+        merged.get("H1", ""), merged.get("H2", ""),
+        merged.get("H3", ""), merged.get("H4", ""))
+    if not hValid and len(hMsg) > 0:
+        errors.append(hMsg)
+
+    # Header Protection: nonce берётся из первых 12 байт префикса Sx,
+    # поэтому при заданном HeaderProtectionKey требуется S1-S4 >= 12
+    hpk = str(merged.get("HeaderProtectionKey") or "").strip()
+    if len(hpk) > 0 and hpk != "0":
+        tooShort = []
+        for name in ("S1", "S2", "S3", "S4"):
+            if name not in merged:
+                continue
+            value = _safeFirstInt(merged[name])
+            if value is not None and value < 12:
+                tooShort.append(f"{name}={value}")
+        if len(tooShort) > 0:
+            errors.append(
+                "HeaderProtectionKey requires S1-S4 >= 12 (got "
+                + ", ".join(tooShort) + ")")
+
+    if len(errors) == 0:
+        return True, ""
+    return False, "; ".join(errors)

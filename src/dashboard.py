@@ -30,9 +30,7 @@ from modules.PeerJobs import PeerJobs
 from modules.DashboardConfig import DashboardConfig
 from modules.WireguardConfiguration import WireguardConfiguration
 from modules.AmneziaConfiguration import AmneziaConfiguration
-from modules.AmneziaValidation import (
-    ValidateAmneziaWG31Params, ValidateH1H4NonOverlapping
-)
+from modules.AmneziaValidation import ValidateAmneziaWGSettings
 
 from client import createClientBlueprint
 
@@ -557,17 +555,9 @@ def API_addWireguardConfiguration():
 
     # Валидация параметров AmneziaWG 2.0+/3.1 (только для протокола awg)
     if data.get("Protocol") == "awg":
-        valid, errors = ValidateAmneziaWG31Params(data)
+        valid, msg = ValidateAmneziaWGSettings(data)
         if not valid:
-            return ResponseObject(False, "Invalid AmneziaWG parameters",
-                                  f"; ".join(f"{k}: {v}" for k, v in errors.items()))
-
-        h_valid, h_msg = ValidateH1H4NonOverlapping(
-            data.get('H1', '1'), data.get('H2', '2'),
-            data.get('H3', '3'), data.get('H4', '4')
-        )
-        if not h_valid:
-            return ResponseObject(False, h_msg)
+            return ResponseObject(False, "Invalid AmneziaWG parameters", msg)
 
     # Check duplicate names, ports, address
     for i in WireguardConfigurations.values():
