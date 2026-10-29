@@ -137,28 +137,18 @@ class DashboardPushNotifications:
         )
         return base64.urlsafe_b64encode(rawPoint).decode('utf-8').rstrip('=')
 
-    def __getVapidClaims(self, origin: str = None) -> dict:
+    def __getVapidClaims(self) -> dict:
         """
-        sub — контакт администратора, aud — origin панели.
-        Push-сервисы (FCM, Mozilla autopush) сверяют aud с origin подписки,
-        поэтому origin сохраняется в момент подписки, а не вычисляется
-        заново: в фоновом потоке объект request недоступен.
+        sub — контакт администратора. Поле aud НЕ задаётся: по RFC 8292
+        §4.1 aud — это origin push-сервиса, определяемый по endpoint'у
+        подписки, и pywebpush выводит его сам (scheme://netloc endpoint'а).
+        Ручной aud (раньше — origin веб-панели) переопределял это значение
+        и давал 401 "audience mismatch" от push-сервисов (FCM, autopush).
         """
         _, sendFrom = self.dashboardConfig.GetConfig("Email", "send_from")
         mailto = f"mailto:{sendFrom}" if sendFrom else "mailto:admin@localhost"
 
-        claims = {"sub": mailto}
-        if origin:
-            claims["aud"] = origin
-        else:
-            try:
-                from flask import request
-                claims["aud"] = request.url_root.rstrip('/')
-            except RuntimeError:
-                # Фоновый поток без сохранённого origin: отправка невозможна
-                raise PushNotificationError(
-                    "No origin available for VAPID claims (subscription predates origin storage)")
-        return claims
+        return {"sub": mailto}
 
     # --------------------------------------------------------- Настройки
 
@@ -294,6 +284,11 @@ class DashboardPushNotifications:
     def __sendOne(self, webpush, subscription: dict, payload: str) -> tuple[bool, str | None]:
         import datetime
         privateKey, _ = self.__ensureVapidKeys()
+        # pywebpush 2.x трактует строку ключа как base64url-DER/raw и падает
+        # на PEM ("Could not deserialize key data"), поэтому PEM из БД
+        # оборачиваем в экземпляр Vapid (subclass Vapid01, проходит проверку
+        # isinstance в pywebpush и сам кодирует str-claims в sign()).
+        from py_vapid import Vapid
         try:
             webpush(
                 subscription_info={
@@ -304,8 +299,8 @@ class DashboardPushNotifications:
                     }
                 },
                 data=payload,
-                vapid_private_key=privateKey,
-                vapid_claims=self.__getVapidClaims(subscription.get('Origin')),
+                vapid_private_key=Vapid.from_pem(privateKey.encode("utf-8")),
+                vapid_claims=self.__getVapidClaims(),
                 ttl=86400,
                 timeout=15
             )
