@@ -1,4 +1,4 @@
-import dashboard
+﻿import dashboard
 import os
 from datetime import datetime
 global sqldb, cursor, DashboardConfig, WireguardConfigurations, AllPeerJobs, JobLogger, Dash
