@@ -361,8 +361,11 @@ class WireguardConfiguration:
                 # колонка, потому что по нему ищут клиента, а notes -
                 # свободный текст произвольного содержания
                 sqlalchemy.Column('telegram', sqlalchemy.String(255)),
-                # Трекер оплаты, привязанный к пиру, а не к учётной записи
-                sqlalchemy.Column('paid_until', time_col_type),
+                # Трекер оплаты, привязанный к пиру, а не к учётной записи.
+                # Для даты оплаты DATETIME при любой БД: MySQL TIMESTAMP
+                # покрывает 1970-2038 и отклоняет дату "Безлимита"
+                # 9999-12-31 (см. DashboardConfig.PeerPaymentsColumnType)
+                sqlalchemy.Column('paid_until', self.DashboardConfig.PeerPaymentsColumnType()),
                 sqlalchemy.Column('payment_comment', sqlalchemy.Text)
             ]
 

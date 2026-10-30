@@ -144,6 +144,22 @@ class DashboardConfig:
         # init=True, т.к. secret_key в hiddenAttribute
         self.SetConfig("Server", "secret_key", newKey, True)
 
+    @staticmethod
+    def PeerPaymentsColumnType() -> db.DateTime:
+        """
+        Тип колонки paid_until (трекер оплат) для таблиц пиров.
+
+        Всегда generic DateTime, независимо от диалекта: MySQL TIMESTAMP
+        живёт в 1970-2038 и отклоняет бессрочную дату 9999-12-31
+        ("Безлимит"), а DATETIME в MySQL покрывает 1000-9999; SQLite
+        динамически типизирован и принимает обе формы; PostgreSQL
+        компилирует generic DateTime в TIMESTAMP WITHOUT TIME ZONE,
+        не ограниченный 2038 годом. Верхний регистр DATETIME (db.DATETIME)
+        здесь использоваться не может: он рендерится в "DATETIME" и на
+        PostgreSQL, где такого типа нет.
+        """
+        return db.DateTime()
+
     def EnsureDatabaseIntegrity(self, wireguardConfigurations):
         expected_columns = {
             'id': db.String(255),
@@ -169,9 +185,10 @@ class DashboardConfig:
             'split_tunnel_ips': db.Text,
             'split_tunnel_mode': db.String(10),
             'telegram': db.String(255),
-            # Трекер оплаты на пире. Тип выбирается по БД, поэтому здесь
-            # передаётся уже готовый объект типа, а не класс.
-            'paid_until': (db.DATETIME if 'sqlite:///' in ConnectionString("wgdashboard") else db.TIMESTAMP),
+            # Трекер оплаты на пире. Всегда DATETIME: MySQL TIMESTAMP
+            # ограничен 2038 годом и отклонял бы дату бессрочной оплаты
+            # 9999-12-31 (см. PeerPaymentsColumnType).
+            'paid_until': DashboardConfig.PeerPaymentsColumnType(),
             'payment_comment': db.Text
         }
 
@@ -205,6 +222,36 @@ class DashboardConfig:
                             quoted_table = preparer.quote_identifier(table_name)
                             quoted_column = preparer.quote_identifier(col_name)
                             conn.execute(db.text(f"ALTER TABLE {quoted_table} ADD COLUMN {quoted_column} {type_str}"))
+
+                    self.__migratePeerPaidUntilToDateTime(conn, table_name)
+
+    def __migratePeerPaidUntilToDateTime(self, conn, table_name: str) -> None:
+        """
+        Разовая миграция для существующих MySQL-таблиц: колонка paid_until
+        раньше создавалась как TIMESTAMP (диапазон 1970-2038), из-за чего
+        бессрочная оплата 9999-12-31 не сохранялась. ALTER MODIFY меняет
+        тип колонки, MySQL переносит существующие значения даты, комментария
+        и остальных полей без потерь.
+
+        SQLite пропускается: динамическая типизация, значения совместимы
+        без изменения схемы. PostgreSQL пропускается: его TIMESTAMP не
+        ограничен 2038 годом.
+        """
+        if self.engine.dialect.name != 'mysql':
+            return
+        # Свежий inspector: колонка могла быть только что добавлена в
+        # основном цикле, кэш сессии отражения мог быть устаревшим
+        column = next((c for c in db.inspect(self.engine).get_columns(table_name)
+                       if c['name'] == 'paid_until'), None)
+        if column is None or 'TIMESTAMP' not in str(column['type']).upper():
+            return
+        preparer = self.engine.dialect.identifier_preparer
+        quotedTable = preparer.quote_identifier(table_name)
+        quotedColumn = preparer.quote_identifier('paid_until')
+        current_app.logger.info(
+            f"Paid-until: migrating column '{table_name}.paid_until' from TIMESTAMP to DATETIME")
+        conn.execute(db.text(
+            f"ALTER TABLE {quotedTable} MODIFY COLUMN {quotedColumn} DATETIME NULL"))
 
     def getConnectionString(self, database) -> str or None:
         sqlitePath = os.path.join(DashboardConfig.ConfigurationPath, "db")
