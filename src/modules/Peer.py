@@ -7,13 +7,13 @@ import json
 import os, subprocess, uuid, random, re, ipaddress, zlib, struct
 from datetime import timedelta
 
-import jinja2
 import sqlalchemy as db
 from .PeerJob import PeerJob
 from  flask import current_app
 from .PeerShareLink import PeerShareLink
 from .DashboardPeerPayments import ComputePaymentStatus, IsUnlimitedPaidUntil, ParsePaidUntilInput
-from .Utilities import GenerateWireguardPublicKey, CheckAddress, ValidateDNSAddress, ValidateSplitTunnelList
+from .Utilities import GenerateWireguardPublicKey, CheckAddress, ValidateDNSAddress, ValidateSplitTunnelList, \
+    RenderSandboxedTemplateSafe
 
 
 class Peer:
@@ -411,7 +411,23 @@ class Peer:
                 if val is not None and ((type(val) is str and len(val) > 0) or (type(val) is int and val > 0)):
                     final["file"] += f"{key} = {val}\n"
 
-        final["file"] = jinja2.Template(final["file"]).render(configuration=self.configuration)
+        # Узкий контекст нарочно: не весь объект конфигурации (его публичные
+        # атрибуты читались шаблоном, включая внутренние - configPath, engine),
+        # а только не-секретные идентификационные поля.
+        ok, renderedConfigurationFile = RenderSandboxedTemplateSafe(
+            final["file"], configuration={
+                "Name": self.configuration.Name,
+                "Protocol": self.configuration.Protocol,
+                "Status": self.configuration.Status,
+                "PublicKey": self.configuration.PublicKey,
+                "Address": self.configuration.Address,
+                "ListenPort": self.configuration.ListenPort,
+            })
+        # Если поле из .conf случайно похоже на шаблон и не отрендерилось
+        # (битый синтаксис / запрещённая операция) - отдаём файл как собран,
+        # скачивание не должно падать.
+        if ok:
+            final["file"] = renderedConfigurationFile
 
 
         if self.configuration.Protocol == "awg":

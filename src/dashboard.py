@@ -7,7 +7,6 @@ from zipfile import ZipFile
 from datetime import datetime, timedelta
 
 import sqlalchemy
-from jinja2 import Template
 from flask import Flask, request, render_template, session, send_file, current_app
 from flask_cors import CORS
 from icmplib import ping, traceroute
@@ -18,7 +17,8 @@ from sqlalchemy import RowMapping
 
 from modules.Utilities import (
     RegexMatch, StringToBoolean, ValidateDNSAddress,
-    GenerateWireguardPublicKey, GenerateWireguardPrivateKey
+    GenerateWireguardPublicKey, GenerateWireguardPrivateKey,
+    RenderSandboxedTemplateSafe
 )
 from packaging import version
 from modules.Email import EmailSender
@@ -1738,10 +1738,17 @@ def API_Email_Send():
             if configuration is not None:
                 fp, p = configuration.searchPeer(data.get('Peer'))
                 if fp:
-                    template = Template(body)
                     download = p.downloadPeer()
-                    body = template.render(peer=p.toJson(), configurationFile=download)
-                    subject = Template(data.get('Subject', '')).render(peer=p.toJson(), configurationFile=download)
+                    ok, rendered = RenderSandboxedTemplateSafe(
+                        body, peer=p.toJson(), configurationFile=download)
+                    if not ok:
+                        return ResponseObject(False, rendered)
+                    body = rendered
+                    ok, rendered = RenderSandboxedTemplateSafe(
+                        subject, peer=p.toJson(), configurationFile=download)
+                    if not ok:
+                        return ResponseObject(False, rendered)
+                    subject = rendered
                     if data.get('IncludeAttachment', False):
                         u = str(uuid4())
                         attachmentName = f'{u}.conf'
@@ -1768,15 +1775,19 @@ def API_Email_PreviewBody():
     if not fp:
         return ResponseObject(False, "Peer does not exist")
 
-    try:
-        template = Template(body)
-        download = p.downloadPeer()
-        return ResponseObject(data={
-            "Body": Template(body).render(peer=p.toJson(), configurationFile=download),
-            "Subject": Template(subject).render(peer=p.toJson(), configurationFile=download)
-        })
-    except Exception as e:
-        return ResponseObject(False, message=str(e))
+    ok, renderedBody = RenderSandboxedTemplateSafe(
+        body, peer=p.toJson(), configurationFile=download)
+    if not ok:
+        return ResponseObject(False, message=renderedBody)
+    ok, renderedSubject = RenderSandboxedTemplateSafe(
+        subject, peer=p.toJson(), configurationFile=download)
+    if not ok:
+        return ResponseObject(False, message=renderedSubject)
+
+    return ResponseObject(data={
+        "Body": renderedBody,
+        "Subject": renderedSubject
+    })
 
 @app.get(f'{APP_PREFIX}/api/systemStatus')
 def API_SystemStatus():

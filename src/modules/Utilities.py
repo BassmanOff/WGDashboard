@@ -1,6 +1,46 @@
 import re, ipaddress
 import subprocess
 import sqlalchemy
+from jinja2.sandbox import SandboxedEnvironment
+from jinja2.exceptions import TemplateSyntaxError, SecurityError, UndefinedError
+
+sandboxEnvironment = SandboxedEnvironment()
+
+def RenderSandboxedTemplate(source: str, **context) -> str:
+    """
+    Render a Jinja2 template within a sandboxed environment. Template sources built with
+    user-provided content (e.g. email body, peer configuration file) must go through this
+    function, so unsafe attribute access (such as __globals__) is denied and template
+    injection cannot escalate into arbitrary code execution.
+    API and semantics are kept identical to the original WGDashboard (donaldzou/WGDashboard),
+    where user template rendering also goes through this helper.
+    @param source: Template source string, may contain user-provided content
+    @param context: Variables passed into the template
+    @return: Rendered template
+    """
+    return sandboxEnvironment.from_string(source).render(**context)
+
+def RenderSandboxedTemplateSafe(source: str, **context) -> tuple[bool, str]:
+    """
+    RenderSandboxedTemplate with guaranteed-safe error handling: on template
+    errors (bad syntax, forbidden operations, etc.) the caller receives only a
+    generic message -- never the exception text, traceback, file paths or
+    template source.
+    @return: (True, rendered template) or (False, safe error message)
+    """
+    try:
+        return True, RenderSandboxedTemplate(source, **context)
+    except TemplateSyntaxError as e:
+        lineno = getattr(e, "lineno", None)
+        if isinstance(lineno, int) and lineno > 0:
+            return False, f"Invalid template syntax (line {lineno})"
+        return False, "Invalid template syntax"
+    except SecurityError:
+        return False, "Template contains forbidden operations"
+    except UndefinedError:
+        return False, "Template references an undefined variable"
+    except Exception:
+        return False, "Template rendering failed"
 
 def RegexMatch(regex, text) -> bool:
     """

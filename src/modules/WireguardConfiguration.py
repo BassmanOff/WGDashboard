@@ -3,7 +3,6 @@ WireGuard Configuration
 """
 from typing import Any
 
-import jinja2
 import sqlalchemy, random, shutil, configparser, ipaddress, os, subprocess, time, re, uuid, psutil, traceback
 from zipfile import ZipFile
 from datetime import datetime, timedelta
@@ -21,7 +20,8 @@ from .Utilities import StringToBoolean, \
     ValidateDNSAddress, \
     ValidateEndpointAllowedIPs, \
     CheckAddress, \
-    CheckPeerKey
+    CheckPeerKey, \
+    RenderSandboxedTemplateSafe
 from .WireguardConfigurationInfo import WireguardConfigurationInfo, PeerGroupsClass
 from .DashboardWebHooks import DashboardWebHooks
 from .AmneziaValidation import ValidateAmneziaWGSettings
@@ -1359,12 +1359,23 @@ class WireguardConfiguration:
             self.configurationInfo.Description = value
         elif key == "OverridePeerSettings":
             for (key, val) in value.items():
-                try:
-                    status, msg = self.__validateOverridePeerSettings(key, jinja2.Template(val).render(configuration=self.toJson()))
-                    if not status:
-                        return False, msg, key
-                except Exception as e:
-                    return False, str(e), None
+                # Узкий контекст: шаблону дают только не-секретные поля
+                # конфигурации; ошибки рендеринга не раскрывают traceback,
+                # пути и исходники шаблона.
+                ok, rendered = RenderSandboxedTemplateSafe(val, configuration={
+                    "Name": self.Name,
+                    "Protocol": self.Protocol,
+                    "Status": self.Status,
+                    "PublicKey": self.PublicKey,
+                    "Address": self.Address,
+                    "ListenPort": self.ListenPort,
+                    "Info": self.configurationInfo.model_dump(),
+                })
+                if not ok:
+                    return False, rendered, None
+                status, msg = self.__validateOverridePeerSettings(key, rendered)
+                if not status:
+                    return False, msg, key
             self.configurationInfo.OverridePeerSettings = (
                 self.configurationInfo.OverridePeerSettings.model_validate(value))
         elif key == "PeerGroups":
